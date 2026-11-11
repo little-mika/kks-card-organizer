@@ -1279,6 +1279,76 @@ def _kill_port(port):
             pass
 
 
+def _msgbox(text, title="KKS Card Organizer"):
+    """pythonw 下没有控制台，出问题时得让人看得见。"""
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, str(text), str(title), 0x40)
+    except Exception:
+        pass
+
+
+# 浏览器真实安装位置。msedge.exe 通常不在 PATH 里，也不在 CreateProcess 的
+# 搜索范围内（App Paths 只有 ShellExecute 会用），所以必须按路径找。
+_BROWSER_PATHS = {
+    "edge": [
+        r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe",
+        r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe",
+        r"%LocalAppData%\Microsoft\Edge\Application\msedge.exe",
+    ],
+    "chrome": [
+        r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
+        r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
+        r"%LocalAppData%\Google\Chrome\Application\chrome.exe",
+    ],
+}
+
+
+def _browser_exe(name):
+    for pat in _BROWSER_PATHS.get(name, ()):
+        p = os.path.expandvars(pat)
+        if os.path.isfile(p):
+            return p
+    return ""
+
+
+def open_ui(url, mode="auto"):
+    """在自己的浏览器里打开界面。
+
+    mode: auto = Edge/Chrome 的应用窗口，找不到就用系统默认浏览器；
+          edge / chrome = 只试这一个；default = 直接用系统默认浏览器。
+    任何一步失败都不会影响服务本身。
+    """
+    import subprocess
+    order = []
+    if mode == "default":
+        order = []
+    elif mode in ("edge", "chrome"):
+        order = [mode]
+    else:
+        order = ["edge", "chrome"]
+    flags = getattr(subprocess, "DETACHED_PROCESS", 0)
+    for name in order:
+        exe = _browser_exe(name)
+        if not exe:
+            log.info("%s 没找到，换下一个", name)
+            continue
+        try:
+            subprocess.Popen([exe, "--app=" + url, "--window-size=1440,960"],
+                             creationflags=flags)
+            log.info("已用 %s 打开界面：%s", os.path.basename(exe), url)
+            return True
+        except Exception:
+            log.exception("%s 打不开，换下一个", name)
+    try:
+        os.startfile(url)          # 系统默认浏览器
+        log.info("已用默认浏览器打开界面：%s", url)
+        return True
+    except Exception:
+        log.exception("默认浏览器也打不开")
+        return False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default=CONF["root"])
@@ -1286,17 +1356,23 @@ def main():
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--db", default=CONF["db"], help="本地索引库路径")
     ap.add_argument("--open", action="store_true")
+    ap.add_argument("--browser", default="auto",
+                    choices=["auto", "edge", "chrome", "default"],
+                    help="用哪个浏览器打开界面（auto = 先 Edge/Chrome 应用窗口，失败退回默认浏览器）")
     ap.add_argument("--kill", action="store_true",
                     help="端口被占用时先杀掉占用者")
     a = ap.parse_args()
-    CONF["root"] = os.path.abspath(a.root)
-    CONF["mods"] = os.path.abspath(a.mods)
+    if a.root:
+        CONF["root"] = os.path.abspath(a.root)
+    if a.mods:
+        CONF["mods"] = os.path.abspath(a.mods)
     if a.db != CONF["db"]:
         CONF["db"] = os.path.abspath(a.db)
         store.init(CONF["db"])
-    if not os.path.isdir(CONF["root"]):
-        print("根目录不存在:", CONF["root"])
-        return 2
+    if not CONF["root"] or not os.path.isdir(CONF["root"]):
+        # 不退出：界面里点左栏底部那行可以指定游戏目录
+        log.warning("卡目录不存在：%r —— 启动后点左栏「游戏目录」那行手动指定", CONF["root"])
+        print("警告：卡目录不存在：", CONF["root"])
     class Srv(ThreadingHTTPServer):
         allow_reuse_address = False
         daemon_threads = True
@@ -1305,9 +1381,7 @@ def main():
         # 是本程序（任何版本）已经起来了，直接开窗口
         print("已有一个实例在 %d 端口运行。" % a.port)
         if a.open:
-            import subprocess
-            subprocess.Popen(["msedge.exe", "--app=http://127.0.0.1:%d/" % a.port,
-                              "--window-size=1440,960"])
+            open_ui("http://127.0.0.1:%d/" % a.port, a.browser)
         return 0
     if a.kill:
         _kill_port(a.port)
@@ -1320,10 +1394,8 @@ def main():
     print("根目录:", CONF["root"])
     print("日志:", LOG_DIR)
     if a.open:
-        import subprocess
-        subprocess.Popen(["msedge.exe", "--app=" + url,
-                          "--window-size=1440,960"],
-                         shell=False)
+        # 服务先能应答，再开窗口；开不了也只是打不开窗口，不影响服务
+        threading.Timer(0.9, open_ui, args=(url, a.browser)).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -1337,4 +1409,12 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except Exception:
+        log.exception("启动失败")
+        _msgbox("启动失败。\n\n详细原因见：\n%s\n\n把 kkcard.log 发到 GitHub Issues 即可。"
+                % os.path.join(LOG_DIR, "kkcard.log"))
+        sys.exit(3)
