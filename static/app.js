@@ -1,4 +1,4 @@
-/* KK 卡片整理器 · 前端 */
+/* KKS 卡片整理器 · 前端 */
 'use strict';
 
 const $ = (s) => document.querySelector(s);
