@@ -1,5 +1,5 @@
 @echo off
-rem KK Card Organizer - launcher.  Double click this file.
+rem KKS Card Organizer - launcher.  Double click this file.
 setlocal
 cd /d "%~dp0"
 

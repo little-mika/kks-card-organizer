@@ -2,7 +2,10 @@
 
 ## 0.1-beta — 2026-11-11
 
-First public build.
+First public build. **Target platform: Koikatsu Sunshine (KKS).**
+
+Not tested on the original Koikatsu (KK). The parser reads KK card headers, but
+KK folder layout and Studio data were never validated — see the README.
 
 ### Cards
 - Character cards (`UserData\chara`), outfit cards (`UserData\coordinate`) and

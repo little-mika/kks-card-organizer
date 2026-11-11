@@ -202,7 +202,7 @@ def make_thumb(src):
 
 # ----------------------------------------------------------------- http
 class Handler(BaseHTTPRequestHandler):
-    server_version = "KKCard/1.0"
+    server_version = "KKSCard/1.0"
 
     def log_message(self, fmt, *args):
         pass

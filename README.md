@@ -1,6 +1,6 @@
-# KK Card Organizer
+# KKS Card Organizer
 
-A portable, offline card manager for **Koikatsu** / **Koikatsu Sunshine** that actually understands zipmod dependencies.
+A portable, offline card manager for **Koikatsu Sunshine (KKS)** that actually understands zipmod dependencies.
 
 **Version 0.1-beta** · Windows 10/11 · No installation · Nothing leaves your PC
 
@@ -8,9 +8,26 @@ A portable, offline card manager for **Koikatsu** / **Koikatsu Sunshine** that a
 
 ---
 
+## Read this first: KKS ≠ KK
+
+**This tool was built for Koikatsu Sunshine (コイカツ！サンシャイン), not the original Koikatsu (KK).**
+
+They are two different games: different executables, different card formats, different folder layouts.
+
+- Everything here was developed and tested against a **real KKS install** (`KoikatsuSunshine.exe`, cards written with the `【KoiKatuCharaSun】` header).
+- It has **never been tested on a vanilla KK install**, and no KK-specific behaviour was verified.
+- The card parser *does* recognise KK cards (`【KoiKatuChara】`) and Koikatsu Party cards (`【KoiKatuCharaSP】`) — KKS itself can load KK cards, which is why they show up in KKS collections and why they are supported as *input*. That is not the same as the tool being validated on KK.
+- Scene cards and the folder layout are assumed to follow KKS. KK's Studio folder differs in places.
+
+So: if you play KKS, this is the intended target. If you play KK only, treat it as **untested** — it may work, it may not, and you should try it on a copy of your data first.
+
+(The name is intentional: the old tool, [KKManager](https://github.com/IllusionMods/KKManager), is Illusion's mod manager and covers many games. This one is narrower — it is about *cards* and it is about *KKS*.)
+
+---
+
 ## The problem
 
-Every Koikatsu mod collection ends up the same way: thousands of `.zipmod` files, thousands of character cards, and almost no way to tell which mod belongs to which card.
+Every KKS mod collection ends up the same way: thousands of `.zipmod` files, thousands of character cards, and almost no way to tell which mod belongs to which card.
 
 The official [KKManager](https://github.com/IllusionMods/KKManager) can tell you *how many cards use a mod* by exporting a CSV. That is a fine report — but it does not help when you want to **delete a card and take its mods with it**. You delete the card, the mods stay behind forever, and the folder keeps growing.
 
@@ -114,7 +131,7 @@ Open a folder for the first time and it takes a second; open it again and the th
 
 ## Quick start
 
-1. Download the release zip and extract it anywhere **without non-ASCII characters in the path** (a known Koikatsu limitation — actually the tool itself handles unicode fine, but keep the game path clean).
+1. Download the release zip and extract it anywhere **without non-ASCII characters in the path** (a known KKS limitation — actually the tool itself handles unicode fine, but keep the game path clean).
 2. Double-click **`启动.bat`**.
 3. A small window opens at `http://127.0.0.1:8765/`.
 
@@ -142,7 +159,7 @@ The current launcher is a plain `.bat` file that does exactly two things: locate
 
 ## How the mod linking actually works
 
-Koikatsu cards are PNG files with a binary payload appended **after** the `IEND` chunk. `kklib.py` reproduces what `KKManager.Core.Data.Cards.CardLoader.ParseCard` does:
+KKS cards are PNG files with a binary payload appended **after** the `IEND` chunk. `kklib.py` reproduces what `KKManager.Core.Data.Cards.CardLoader.ParseCard` does:
 
 ```
 [PNG header + chunks + IEND]

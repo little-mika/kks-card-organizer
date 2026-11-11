@@ -1,10 +1,27 @@
-# KK 卡片整理器（KK Card Organizer）
+# KKS 卡片整理器（KKS Card Organizer）
 
-给 **恋活（Koikatsu）** / **恋活Sunshine（Koikatsu Sunshine）** 用的本地卡片管理器，真正能看懂 zipmod 依赖关系。
+给 **恋活Sunshine（Koikatsu Sunshine，简称 KKS）** 用的本地卡片管理器，真正能看懂 zipmod 依赖关系。
+
+> **本项目由 DeepSeek 开发。**
 
 **版本 0.1-beta** · Windows 10/11 · 免安装 · 全程离线，不联网
 
-> **本管理器由 DeepSeek 开发。**
+---
+
+## 先说清楚：KKS 不是 KK
+
+**这个工具是为「恋活Sunshine」（コイカツ！サンシャイン，KKS）做的，不是原版「恋活」（Koikatsu，KK）。**
+
+这是两个游戏：可执行文件不同、卡片格式不同、目录结构也不完全一样。
+
+- 全部功能都是在**真实的 KKS 整合包**上开发和测试的（`KoikatsuSunshine.exe`，卡片头 `【KoiKatuCharaSun】`）。
+- **从未在原版 KK 环境里实际测试过**，也没有针对 KK 做过任何兼容性验证。
+- 解析器确实能认出 KK 的卡（`【KoiKatuChara】`）和 Koikatsu Party 的卡（`【KoiKatuCharaSP】`）——因为 KKS 本身就能读 KK 的卡，所以 KKS 的卡库混着 KK 卡很常见，把它当**输入**支持是一回事，这不等于「这工具在 KK 上验证过」。
+- 场景卡格式和目录布局都按 KKS 假设。KK 的 Studio 目录在部分位置不一样。
+
+结论：玩 KKS 的，这是目标平台。只玩 KK 的，请当作**未测试**——可能能用，也可能不能，建议先拿一份数据副本试。
+
+（名字是刻意的：[KKManager](https://github.com/IllusionMods/KKManager) 是 Illusion 官方的 mod 管理器，覆盖多款游戏；这个更窄——它只管**卡片**，而且只管 **KKS**。）
 
 ---
 
@@ -112,7 +129,7 @@ moderchan.CharamakerSupportMOD   面部·鼻子、身体·涂装2
 
 ## 快速开始
 
-1. 下载 Release 里的 zip，解压到任意位置（**路径别带中文**——这是恋活本身的老毛病，工具自己处理 unicode 没问题，但游戏目录最好干净）。
+1. 下载 Release 里的 zip，解压到任意位置（**路径别带中文**——这是恋活/KKS 整合包的老毛病，工具自己处理 unicode 没问题，但游戏目录最好干净）。
 2. 双击 **`启动.bat`**。
 3. 弹出应用窗口，地址是 `http://127.0.0.1:8765/`。
 
@@ -140,7 +157,7 @@ CONF = {
 
 ## mod 关联是怎么算出来的
 
-恋活的卡是「PNG 图片 + `IEND` 之后追加的二进制数据」。`kklib.py` 复刻了 `KKManager.Core.Data.Cards.CardLoader.ParseCard` 的流程：
+KKS 的卡是「PNG 图片 + `IEND` 之后追加的二进制数据」。`kklib.py` 复刻了 `KKManager.Core.Data.Cards.CardLoader.ParseCard` 的流程：
 
 ```
 [PNG 头 + 数据块 + IEND]
