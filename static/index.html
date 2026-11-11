@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KK 卡片整理器</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- 标题栏 -->
+  <header class="titlebar">
+    <div class="tb-left">
+      <div class="logo">KK</div>
+      <div>
+        <div class="tb-title">卡片整理器 <span class="ver" id="verTag"></span></div>
+        <div class="tb-sub" id="rootPath">正在读取…</div>
+      </div>
+    </div>
+    <div class="tb-right">
+      <div class="pill" id="pillDir">未选择文件夹</div>
+      <div class="pill dim" id="pillCount">—</div>
+    </div>
+  </header>
+
+  <!-- 主体 -->
+  <div class="main">
+
+    <!-- 左：文件夹树 -->
+    <aside class="sidebar">
+      <div class="roots" id="roots">
+        <button class="rootbtn active" data-root="chara">人物卡</button>
+        <button class="rootbtn" data-root="coord">服装卡</button>
+        <button class="rootbtn" data-root="scene">场景卡</button>
+      </div>
+      <div class="side-head">
+        <span>选择文件夹</span>
+        <button class="icon-btn" id="btnCollapse" title="全部折叠">⇱</button>
+      </div>
+      <div class="tree" id="tree">
+        <div class="tree-empty">载入中…</div>
+      </div>
+      <div class="side-foot">
+        <span class="hint" id="skipInfo"></span>
+        <a class="idx-line" id="idxInfo" title="点击重建本地索引">本地库：读取中…</a>
+      </div>
+    </aside>
+
+    <!-- 右：卡区 -->
+    <section class="content">
+      <div class="toolbar" id="toolbar">
+        <div class="tb-info"><span id="tbDir">未选择文件夹</span></div>
+        <div class="tb-actions">
+          <span class="selinfo" id="selInfo">未选择卡片</span>
+          <button class="btn" id="btnMove" disabled>移动到…</button>
+          <button class="btn" id="btnInstall">安装…</button>
+          <button class="btn" id="btnRecycle">回收站</button>
+          <button class="btn danger" id="btnQuar" disabled>隔离删除</button>
+          <button class="btn" id="btnOpen">打开文件夹</button>
+          <button class="btn" id="btnNewDir">新建文件夹</button>
+          <button class="btn ghost" id="btnRefresh">刷新</button>
+        </div>
+      </div>
+
+      <div class="filterbar hidden" id="filterBar">
+        <input class="inp fs" id="fName" placeholder="按名字筛选…" spellcheck="false">
+        <select class="inp fs" id="fMod">
+          <option value="">mod 数量不限</option>
+          <option value="zero">一张 mod 都没用</option>
+          <option value="few">1–5 个 mod</option>
+          <option value="mid">6–20 个</option>
+          <option value="many">20 个以上</option>
+        </select>
+        <select class="inp fs" id="fType">
+          <option value="">全部类型</option>
+          <option value="card">人物卡</option>
+          <option value="coord">服装卡</option>
+          <option value="scene">场景卡</option>
+          <option value="bad">读不出的</option>
+        </select>
+        <span class="muted small" id="fCount"></span>
+        <span class="grow"></span>
+        <button class="btn ghost small" id="fReset">清空筛选</button>
+      </div>
+
+      <div class="empty-state" id="emptyState">
+        <div class="es-icon">🗂</div>
+        <div class="es-title">先选一个文件夹</div>
+        <div class="es-sub">左侧点开任意子文件夹，只读取该文件夹里的卡<br><span class="mono">不会递归，也不会一次加载全部</span></div>
+      </div>
+
+      <div class="grid-wrap hidden" id="gridWrap">
+        <div class="grid" id="grid"></div>
+      </div>
+
+      <div class="loading hidden" id="loading">
+        <div class="spinner"></div><div id="loadingText">读取中…</div>
+      </div>
+    </section>
+
+    <!-- 详情抽屉 -->
+    <aside class="detail hidden" id="detail">
+      <button class="det-close" id="detClose">✕</button>
+      <div class="det-body" id="detBody"></div>
+    </aside>
+  </div>
+</div>
+
+<!-- 移动目标选择 -->
+<div class="modal hidden" id="moveModal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span>移动到哪个文件夹</span>
+      <button class="modal-x" id="moveClose">✕</button>
+    </div>
+    <div class="modal-tree" id="moveTree"></div>
+    <div class="modal-foot">
+      <span id="moveTarget" class="muted">还没选目标</span>
+      <span class="grow"></span>
+      <button class="btn" id="moveNewDir">＋ 新建文件夹</button>
+      <button class="btn primary" id="moveOk" disabled>移动</button>
+    </div>
+  </div>
+</div>
+
+<!-- 安装 -->
+<div class="modal hidden" id="instModal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span>安装一个卡片文件夹</span>
+      <button class="modal-x" id="instClose">✕</button>
+    </div>
+    <div class="inst-body">
+      <label class="lb">源文件夹路径</label>
+      <div class="row-flex">
+        <input id="instSrc" class="inp grow" spellcheck="false" placeholder="点右边「浏览…」挑一个文件夹">
+        <button class="btn" id="instBrowse">浏览…</button>
+      </div>
+      <div class="hint" id="instHint">扫描这一层（含子目录）里的 png 卡和 .zipmod：<br>
+        人物卡 → 放进当前预览的文件夹；服装卡 → 放进 coordinate；mod → 放进游戏 mods；<br>
+        认不出的（比如不像 mod 的 zip）→ 放进「未分类」。全部记账，可整批撤销。</div>
+      <div class="inst-preview" id="instPreview"></div>
+    </div>
+    <div class="modal-foot">
+      <span id="instInfo" class="muted">还没扫描</span>
+      <span class="grow"></span>
+      <button class="btn ghost" id="instHistory">历史记录</button>
+      <button class="btn" id="instScan">扫描</button>
+      <button class="btn primary" id="instOk" disabled>开始安装</button>
+    </div>
+  </div>
+</div>
+
+<!-- 隔离确认 -->
+<div class="modal hidden" id="quarModal">
+  <div class="modal-box narrow">
+    <div class="modal-head">
+      <span>隔离删除</span>
+      <button class="modal-x" id="quarClose">✕</button>
+    </div>
+    <div class="quar-body">
+      <p>把选中的 <b id="quarCount">0</b> 张卡移进隔离区，不直接删除：</p>
+      <div class="row-flex">
+        <div class="mono quar-path grow" id="quarPath"></div>
+        <button class="btn" id="quarPick">更换…</button>
+      </div>
+      <p class="muted small">会保留原来的分类层级，每张卡单独一个文件夹，旁边写一份 <span class="mono">_info.json</span> 记录它引用的 zipmod。
+        批次目录里还有 <span class="mono">_报告.html</span>，列出这些卡用过的所有 GUID。</p>
+      <div class="det-warn info" id="quarNote"></div>
+      <label class="chk-row">
+        <input type="checkbox" id="quarMods" checked>
+        <span>连带把「只被这批卡用到」的 mod 一起移走
+          <span class="muted small">（仍被其它卡引用的不动；一次要扫全库，第一次会慢十几秒）</span></span>
+      </label>
+    </div>
+    <div class="modal-foot">
+      <span class="muted">随时可以把文件夹拖回原处还原</span>
+      <span class="grow"></span>
+      <button class="btn" id="quarCancel">取消</button>
+      <button class="btn danger" id="quarOk">移入隔离区</button>
+    </div>
+  </div>
+</div>
+
+<!-- 安装历史 -->
+<div class="modal hidden" id="histModal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span>安装历史（最近 10 次）</span>
+      <button class="modal-x" id="histClose">✕</button>
+    </div>
+    <div class="hist-body" id="histBody"></div>
+    <div class="modal-foot">
+      <span class="muted">只记录文件位置变更，不备份内容</span>
+      <span class="grow"></span>
+      <button class="btn" id="histClose2">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 回收站 -->
+<div class="modal hidden" id="recModal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span>隔离区 · 还原</span>
+      <button class="modal-x" id="recClose">✕</button>
+    </div>
+    <div class="rec-body" id="recBody"></div>
+    <div class="modal-foot">
+      <span class="muted" id="recPath"></span>
+      <span class="grow"></span>
+      <button class="btn" id="recRefresh">重新扫描</button>
+      <button class="btn primary" id="recOk" disabled>还原选中的</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
