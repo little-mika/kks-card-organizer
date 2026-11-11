@@ -91,11 +91,12 @@ except Exception:
     HAS_PIL = False
 
 CONF = {
-    "root": r"D:\kks\K_K_S\UserData\chara",
-    "coord": r"D:\kks\K_K_S\UserData\coordinate",
-    "mods": r"D:\kks\K_K_S\mods",
-    "recycle": r"D:\kks\隔离区",
-    "scene": r"D:\kks\K_K_S\UserData\Studio\scene",
+    "game": "",      # Koikatsu Sunshine 根目录，由自动探测或设置填充
+    "root": "",
+    "coord": "",
+    "mods": "",
+    "recycle": "",
+    "scene": "",
     "thumb_dir": os.path.join(HERE, "data", "thumb"),
     "settings": os.path.join(HERE, "data", "settings.json"),
     "instlog": os.path.join(HERE, "data", "install_log.json"),
@@ -106,27 +107,148 @@ os.makedirs(os.path.dirname(CONF["settings"]), exist_ok=True)
 store.init(CONF["db"])
 
 
+# ------------------------------------------------------------ 游戏目录探测
+def is_kks_root(path):
+    """一个目录像不像 KKS 安装根。"""
+    if not path or not os.path.isdir(path):
+        return False
+    if os.path.isfile(os.path.join(path, "KoikatsuSunshine.exe")):
+        return True
+    if os.path.isdir(os.path.join(path, "KoikatsuSunshine_Data")):
+        return True
+    if os.path.isdir(os.path.join(path, "UserData", "chara")):
+        return True
+    return False
+
+
+def _kks_layout(game):
+    """游戏根 -> 四个子目录。"""
+    g = os.path.abspath(game)
+    return {
+        "root": os.path.join(g, "UserData", "chara"),
+        "coord": os.path.join(g, "UserData", "coordinate"),
+        "scene": os.path.join(g, "UserData", "Studio", "scene"),
+        "mods": os.path.join(g, "mods"),
+    }
+
+
+def read_registry_installdir():
+    """KoikatuSunshineRegistryFixer.bat 会把 INSTALLDIR 写进注册表。"""
+    try:
+        import winreg
+    except Exception:
+        return None
+    keys = [
+        (winreg.HKEY_CURRENT_USER, r"Software\Illusion\KoikatsuSunshine\KoikatsuSunshine"),
+        (winreg.HKEY_CURRENT_USER, r"Software\Illusion\KoikatsuSunshine"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Illusion\KoikatsuSunshine\KoikatsuSunshine"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Illusion\KoikatsuSunshine\KoikatsuSunshine"),
+    ]
+    names = ("INSTALLDIR", "InstallDir", "InstallPath", "GameDir", "Path")
+    for hive, sub in keys:
+        try:
+            with winreg.OpenKey(hive, sub) as k:
+                for name in names:
+                    try:
+                        v, _ = winreg.QueryValueEx(k, name)
+                    except OSError:
+                        continue
+                    if v and os.path.isdir(v) and is_kks_root(v):
+                        return os.path.abspath(v)
+        except OSError:
+            continue
+    return None
+
+
+def guess_game_root():
+    """注册表 -> 程序附近 -> 常见盘符，返回找到的 KKS 根目录或 None。"""
+    p = read_registry_installdir()
+    if p:
+        return p
+
+    names = ("K_K_S", "KoikatsuSunshine", "KoikatuSunshine", "KKS", "恋活Sunshine", "Koikatsu")
+    seen = set()
+    d = HERE
+    for _ in range(4):
+        if d in seen:
+            break
+        seen.add(d)
+        if is_kks_root(d):
+            return d
+        for n in names:
+            c = os.path.join(d, n)
+            if is_kks_root(c):
+                return c
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+
+    for drive in "CDEFGHIJK":
+        base = drive + ":\\"
+        if not os.path.isdir(base):
+            continue
+        for n in names:
+            for cand in (os.path.join(base, n), os.path.join(base, n, "K_K_S")):
+                if is_kks_root(cand):
+                    return os.path.abspath(cand)
+    return None
+
+
+def apply_game_root(game, recycle=None, save=True):
+    """把游戏根写进 CONF，顺带重算四个子目录。"""
+    game = os.path.abspath(game)
+    CONF["game"] = game
+    for k, v in _kks_layout(game).items():
+        CONF[k] = v
+    if recycle:
+        CONF["recycle"] = os.path.abspath(recycle)
+    elif not CONF.get("recycle"):
+        CONF["recycle"] = os.path.join(os.path.dirname(game), "隔离区")
+    if save:
+        save_settings()
+    return CONF
+
+
 def load_settings():
     try:
         with open(CONF["settings"], encoding="utf-8") as f:
             d = json.load(f)
     except Exception:
         return
-    for k in ("recycle", "mods"):
-        if d.get(k):
-            CONF[k] = d[k]
+    game = d.get("game") or ""
+    if game and is_kks_root(game):
+        apply_game_root(game, recycle=d.get("recycle"), save=False)
+        return
+    if d.get("mods"):
+        CONF["mods"] = d["mods"]
+    if d.get("recycle"):
+        CONF["recycle"] = d["recycle"]
+    if d.get("root") and os.path.isdir(d["root"]):
+        for k in ("root", "coord", "scene"):
+            if d.get(k):
+                CONF[k] = d[k]
 
 
 def save_settings():
     try:
         with open(CONF["settings"], "w", encoding="utf-8") as f:
-            json.dump({"recycle": CONF["recycle"], "mods": CONF["mods"]}, f,
-                      ensure_ascii=False, indent=2)
+            json.dump({
+                "game": CONF["game"], "root": CONF["root"], "coord": CONF["coord"],
+                "scene": CONF["scene"], "mods": CONF["mods"], "recycle": CONF["recycle"],
+            }, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
 
 
 load_settings()
+if not is_kks_root(CONF.get("game")):
+    _g = guess_game_root()
+    if _g:
+        apply_game_root(_g, recycle=CONF.get("recycle") or None, save=True)
+        log.info("自动识别游戏目录：%s", CONF["game"])
+    else:
+        log.warning("没找到 KoikatsuSunshine 安装目录，请在界面里手动指定")
 
 # 可浏览的根：key -> 绝对路径
 ROOTS = {"chara": "root", "coord": "coord", "scene": "scene"}
@@ -257,10 +379,12 @@ class Handler(BaseHTTPRequestHandler):
                 coord = CONF["coord"]
                 scene = CONF["scene"]
                 return self._send(200, {
+                    "game": CONF["game"], "game_ok": is_kks_root(CONF["game"]),
                     "root": CONF["root"], "coord": coord, "mods": CONF["mods"],
                     "recycle": CONF["recycle"], "scene": scene, "has_pil": HAS_PIL,
                     "has_coord": os.path.isdir(coord),
                     "has_scene": os.path.isdir(scene),
+                    "has_root": os.path.isdir(CONF["root"]),
                     "version": VERSION, "logs": LOG_DIR,
                 })
 
@@ -333,6 +457,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._api_pickdir(body)
             if u.path == "/api/settings":
                 return self._api_settings(body)
+            if u.path == "/api/detect":
+                return self._api_detect(body)
             if u.path == "/api/instlog":
                 return self._api_instlog(body)
             if u.path == "/api/undo":
@@ -426,6 +552,35 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(500, {"error": "无法启动资源管理器：%s" % e})
         return self._send(200, {"ok": True, "path": p})
 
+    def _api_detect(self, body):
+        """自动/手动定位 KKS 安装目录。"""
+        game = (body.get("game") or "").strip()
+        if game:
+            game = os.path.abspath(game)
+            if not os.path.isdir(game):
+                return self._send(400, {"error": "目录不存在：%s" % game})
+            if not is_kks_root(game):
+                # 允许直接指向 K_K_S 这种带 exe 的目录，也允许指到上一级
+                for name in ("K_K_S", "KoikatsuSunshine", "Koikatsu"):
+                    c = os.path.join(game, name)
+                    if is_kks_root(c):
+                        game = c
+                        break
+                else:
+                    return self._send(400, {"error": "这个目录里没有 KoikatsuSunshine.exe"})
+        else:
+            game = guess_game_root()
+            if not game:
+                return self._send(200, {"ok": False, "error": "没找到，请手动选一下游戏根目录"})
+        recycle = body.get("recycle") or None
+        apply_game_root(game, recycle=recycle)
+        self._forget()
+        log.info("游戏目录设为 %s", CONF["game"])
+        return self._send(200, {"ok": True, "game": CONF["game"],
+                                "root": CONF["root"], "coord": CONF["coord"],
+                                "scene": CONF["scene"], "mods": CONF["mods"],
+                                "recycle": CONF["recycle"]})
+
     # ------------------------------------------------------- 隔离删除
     def _api_quarantine(self, body):
         rp = root_path(body.get("root"))
@@ -502,13 +657,17 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(200, {"path": p})
 
     def _api_settings(self, body):
+        if body.get("game"):
+            apply_game_root(body["game"], recycle=body.get("recycle") or None)
         if body.get("recycle"):
-            p = os.path.abspath(body["recycle"])
-            CONF["recycle"] = p
+            CONF["recycle"] = os.path.abspath(body["recycle"])
         if body.get("mods"):
             CONF["mods"] = os.path.abspath(body["mods"])
         save_settings()
-        return self._send(200, {"recycle": CONF["recycle"], "mods": CONF["mods"]})
+        self._forget()
+        return self._send(200, {"game": CONF["game"], "root": CONF["root"],
+                                "coord": CONF["coord"], "scene": CONF["scene"],
+                                "mods": CONF["mods"], "recycle": CONF["recycle"]})
 
     def _api_instlog(self, body):
         return self._send(200, {"log": load_instlog()})
@@ -603,18 +762,16 @@ def _unique_path(dest_dir, name):
 
 
 def _do_install(source, dest, dest_rel, root_name="chara"):
-    """卡按类型归位，mod 进 mods，认不出的进未分类，全程记账可撤销。"""
+    """卡按类型归位，mod 进 mods；认不出的原样留下，由用户自己决定放哪。"""
     scan = _install_scan(source)
     coord_root = CONF["coord"]
     mods_dir = CONF["mods"]
-    unclassified = os.path.join(os.path.dirname(os.path.abspath(CONF["recycle"])), "未分类")
-    for p in (mods_dir, unclassified):
-        try:
-            os.makedirs(p, exist_ok=True)
-        except Exception:
-            pass
+    try:
+        os.makedirs(mods_dir, exist_ok=True)
+    except Exception:
+        pass
 
-    moves, errors = [], []
+    moves, errors, skipped = [], [], []
     counts = {"card": 0, "coord": 0, "mod": 0, "unknown": 0}
 
     def move_to(src_path, dst_dir, tag):
@@ -649,7 +806,7 @@ def _do_install(source, dest, dest_rel, root_name="chara"):
     for m in scan["mods"]:
         low = m["name"].lower()
         if low.endswith(".zip") and not _zip_is_mod(m["path"]):
-            move_to(m["path"], unclassified, "unknown")
+            skipped.append(m["name"])
             continue
         if os.path.exists(os.path.join(mods_dir, os.path.basename(m["path"]))):
             errors.append("%s：mods 里已有同名文件，跳过" % m["name"])
@@ -673,7 +830,8 @@ def _do_install(source, dest, dest_rel, root_name="chara"):
     return {"cards": [os.path.basename(m["dst"]) for m in moves if m["type"] == "card"],
             "coords": [os.path.basename(m["dst"]) for m in moves if m["type"] == "coord"],
             "mods": [os.path.basename(m["dst"]) for m in moves if m["type"] == "mod"],
-            "unknown": [os.path.basename(m["dst"]) for m in moves if m["type"] == "unknown"],
+            "unknown": [],
+            "skipped": skipped,
             "errors": errors, "counts": counts, "entry": entry.get("id") if moves else None,
             "dest": dest_rel, "src": source}
 

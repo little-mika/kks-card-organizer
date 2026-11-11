@@ -23,18 +23,25 @@ KK folder layout and Studio data were never validated — see the README.
   put. Mods shared inside one batch go to `_共用mod\`.
 - Recycle bin restores a card and its mods to the original locations.
 - Install: point at an extracted pack, cards go to the current folder, outfit
-  cards to `coordinate`, zipmods to the mods folder, unknown files to
-  `未分类`. Last 10 install runs can be undone individually.
+  cards to `coordinate`, zipmods to the mods folder. **Anything unrecognised
+  stays where it is — no `未分类` folder is created.** Last 10 install runs can
+  be undone individually.
+
+### Setup
+- The game folder is discovered automatically: `data\settings.json`, then the
+  registry (`HKCU\Software\Illusion\KoikatsuSunshine\KoikatsuSunshine` →
+  `INSTALLDIR`, written by `KoikatuSunshineRegistryFixer.bat`), then the
+  folder the tool sits in, then common drive paths. Click the line at the
+  bottom of the sidebar to point it somewhere else by hand.
+- Launcher looks for `pythonw` next to itself, then on `PATH`, then in the
+  development runtime — a `python\` folder is no longer required.
+- English / 中文 interface toggle in the top-right corner.
 
 ### Performance
 - SQLite index (`data\kkcard.db`) makes reopening a folder ~100× faster.
 - 5064 cards indexed in ~28 s once; 16577 zipmods in ~3.7 s.
 
 ### Misc
-- **English / 中文 UI.** Toggle in the top-right corner; the choice is stored in
-  `localStorage`, non-Chinese systems start in English. Translation is applied
-  at the DOM layer (`static/i18n.js`), so the Chinese strings in `app.js` stay
-  untouched.
 - Rotating log in `logs\kkcard.log`, traceback dump in `logs\crash.txt`,
   front-end errors in `logs\frontend.log`.
 - Launcher is a plain `.bat` (see README: the earlier `.vbs` was correctly

@@ -104,7 +104,9 @@ Point the tool at the folder you just extracted from an archive, and it sorts th
 | outfit card | `UserData\coordinate` |
 | `.zipmod` | your mods folder |
 | `.zip` that contains `manifest.xml` or `abdata/` | your mods folder |
-| anything else | a `未分类` (unsorted) folder next to the quarantine |
+| anything it cannot identify | **stays where it is** — nothing is created, nothing is moved |
+
+There is no "unsorted" folder. If you want one, make it yourself (right-click → 新建文件夹 in the app, or in Explorer) and pick it as the target — the tool never decides for you.
 
 Every install is recorded (file moves only, no copies) and the last 10 runs can be **undone one by one** from the Install dialog.
 
@@ -139,19 +141,22 @@ The interface ships in both languages. The button in the top-right corner switch
 2. Double-click **`启动.bat`**.
 3. A small window opens at `http://127.0.0.1:8765/`.
 
-If your game lives somewhere unusual, edit the paths at the top of `server.py`:
+### Finding the game
 
-```python
-CONF = {
-    "root":  r"..\UserData\chara",
-    "coord": r"..\UserData\coordinate",
-    "scene": r"..\UserData\Studio\scene",
-    "mods":  r"..\mods",
-    "recycle": r"..\隔离区",
-}
-```
+The tool locates Koikatsu Sunshine by itself, in this order:
 
-(or set them from the UI where available — `data\settings.json` is read at startup).
+1. `data\settings.json` — whatever it configured last time
+2. **the registry** — `HKCU\Software\Illusion\KoikatsuSunshine\KoikatsuSunshine` → `INSTALLDIR`, which is exactly what the community `KoikatuSunshineRegistryFixer.bat` writes
+3. the folder the tool sits in, and up to three levels above it (looking for `K_K_S`, `KoikatsuSunshine.exe`, `UserData\chara`)
+4. the usual drive roots (`C:\` … `K:\`) under names like `kks`, `KKS`, `K_K_S`, `KoikatsuSunshine`, `恋活Sunshine`
+
+Whatever it finds is written back to `data\settings.json`, so you only pay for the search once. The result is shown at the bottom of the left sidebar; **click that line** to pick a different folder by hand — the four sub-paths (`chara`, `coordinate`, `Studio\scene`, `mods`) are derived automatically and the quarantine defaults to `隔离区` next to the game folder.
+
+If you move the game later, click the line and point it at the new place. Nothing else needs editing.
+
+### Organising cards your own way
+
+The folder tree on the left is just `UserData\chara` as it exists on disk. Create as many subfolders as you like — `抽卡游戏`, `原神`, `22.7.15`, whatever — the game reads them recursively. The app shows one folder at a time (no recursion), and **移动…** moves the selected cards into any folder of that tree, creating new ones with **新建文件夹**.
 
 ### About antivirus warnings
 

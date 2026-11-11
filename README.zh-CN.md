@@ -104,7 +104,9 @@ moderchan.CharamakerSupportMOD   面部·鼻子、身体·涂装2
 | 服装卡 | `UserData\coordinate` |
 | `.zipmod` | 游戏 mods 目录 |
 | 内含 `manifest.xml` 或 `abdata/` 的 `.zip` | 游戏 mods 目录 |
-| 其它认不出的 | 隔离区旁边的 `未分类` 文件夹 |
+| 其它认不出的 | **原样留在原地**——不建文件夹，不搬 |
+
+没有「未分类」这种默认文件夹。要分类就自己建（界面里「新建文件夹」，或者资源管理器里建），再自己选目标——工具不替你决定。
 
 每次安装都会记账（只记位置变更，不备份内容），最近 10 次可以在「历史记录」里**逐次撤销**。
 
@@ -136,19 +138,22 @@ moderchan.CharamakerSupportMOD   面部·鼻子、身体·涂装2
 2. 双击 **`启动.bat`**。
 3. 弹出应用窗口，地址是 `http://127.0.0.1:8765/`。
 
-如果游戏装得比较特别，改 `server.py` 顶部的路径：
+### 它自己会找游戏目录
 
-```python
-CONF = {
-    "root":  r"..\UserData\chara",
-    "coord": r"..\UserData\coordinate",
-    "scene": r"..\UserData\Studio\scene",
-    "mods":  r"..\mods",
-    "recycle": r"..\隔离区",
-}
-```
+工具按这个顺序找 Koikatsu Sunshine：
 
-（部分路径可以在界面里改，写进 `data\settings.json`，启动时读取。）
+1. `data\settings.json` —— 上次记住的路径
+2. **注册表** —— `HKCU\Software\Illusion\KoikatsuSunshine\KoikatsuSunshine` 的 `INSTALLDIR`，正是社区里 `KoikatuSunshineRegistryFixer.bat` 写的那一项
+3. 工具所在目录往上三级（找 `K_K_S`、`KoikatsuSunshine.exe`、`UserData\chara`）
+4. `C:` 到 `K:` 各盘根下的常见名字：`kks`、`KKS`、`K_K_S`、`KoikatsuSunshine`、`恋活Sunshine`
+
+找到就写回 `data\settings.json`，只搜这一次。结果显示在左栏底部，**点那一行**可以手动换目录；四个子路径（`chara`、`coordinate`、`Studio\scene`、`mods`）自动推导，隔离区默认在游戏目录旁边的 `隔离区`。
+
+以后把游戏挪走了，点那一行重新指一次即可，其它都不用改。
+
+### 按自己的方式整理卡片
+
+左边那棵树就是磁盘上的 `UserData\chara`。想建多少层子文件夹都行——`抽卡游戏`、`原神`、`22.7.15`，游戏会递归读。工具一次只显示一个文件夹（不递归），选好卡片用「移动…」搬到树里任意位置，目标不存在就用「新建文件夹」建一个。
 
 ### 关于杀软报毒
 
