@@ -191,10 +191,18 @@
     '记录它引用的 zipmod。': 'records the zipmods it referenced.',
     '记录它引用的 zipmod。 批次目录里还有': 'records the zipmods it referenced. The batch folder also holds',
     '批次目录里还有': 'The batch folder also holds',
-    '，列出这些卡用过的所有 GUID。': ', listing every GUID these cards used.'
+    '，列出这些卡用过的所有 GUID。': ', listing every GUID these cards used.',
+
+    '游戏目录：读取中…': 'Game folder: reading…',
+    '⚠ 没找到游戏目录，点这里指定': '⚠ No game folder found — click to pick one',
+    '认不出的（比如不像 mod 的 zip）原样留在原地，不动它们。全部记账，可在「历史记录」里整批撤销。':
+      'Anything unrecognised (e.g. a zip that is not a mod) stays where it is. Everything is logged — undo a run in 「History」.',
+    '这个目录里没有 KoikatsuSunshine.exe': 'No KoikatsuSunshine.exe in that folder'
   };
 
   var RULES = [
+    [/^游戏目录：(.+)$/, 'Game folder: $1'],
+    [/^认不出的 (\d+) 个留在原地没动（比如不像 mod 的 zip）$/, '$1 file(s) left untouched (e.g. a zip that is not a mod)'],
     [/^(Koikatsu Sunshine|Koikatsu|Koikatu)[\s\u00a0]+人物卡([\s\S]*)$/, '$1 character card$2'],
     [/^(Koikatsu Sunshine|Koikatsu|Koikatu)[\s\u00a0]+服装卡([\s\S]*)$/, '$1 outfit card$2'],
     [/^(Koikatsu Sunshine|Koikatsu|Koikatu)[\s\u00a0]+场景卡([\s\S]*)$/, '$1 scene card$2'],

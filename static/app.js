@@ -61,7 +61,8 @@ async function boot() {
     ROOTPATH.scene = cfg.scene || '';
     ROOT = ROOTPATH.chara;
     RECYCLE = cfg.recycle || '';
-    $('#rootPath').textContent = ROOT;
+    $('#rootPath').textContent = ROOT || '未设置游戏目录';
+    showGameLine(cfg);
     const bc = document.querySelector('.rootbtn[data-root="coord"]');
     if (bc && !cfg.has_coord) { bc.disabled = true; bc.title = '找不到 coordinate 目录'; }
     const bs = document.querySelector('.rootbtn[data-root="scene"]');
@@ -72,6 +73,34 @@ async function boot() {
   }
   loadIndexInfo();
   await loadTree(true);
+}
+
+function showGameLine(cfg) {
+  const el2 = $('#gameLine');
+  if (!el2) return;
+  if (cfg.game_ok) {
+    el2.textContent = '游戏目录：' + cfg.game;
+    el2.classList.remove('bad');
+    el2.title = '点击重新查找游戏目录';
+  } else {
+    el2.textContent = '⚠ 没找到游戏目录，点这里指定';
+    el2.classList.add('bad');
+    el2.title = '点击选择 KoikatsuSunshine 所在文件夹';
+  }
+}
+
+async function detectGame(manual) {
+  let game = '';
+  if (manual) {
+    game = await pickFolder('');
+    if (!game) return;
+  }
+  const r = await (await fetch('/api/detect', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ game })
+  })).json();
+  if (!r.ok) { alert(r.error || '没找到'); return; }
+  location.reload();
 }
 
 async function loadIndexInfo() {
@@ -833,7 +862,7 @@ function openInstall() {
     ? '人物卡会放进当前预览的文件夹：<b>' + esc(state.current) + '</b>'
     : '先在左边选一个文件夹，人物卡会放进那里')
     + '；服装卡 → coordinate；mod → 游戏 mods；<br>'
-    + '认不出的（比如不像 mod 的 zip）→「未分类」。全部记账，可在「历史记录」里整批撤销。';
+    + '认不出的（比如不像 mod 的 zip）原样留在原地，不动它们。全部记账，可在「历史记录」里整批撤销。';
   $('#instModal').classList.remove('hidden');
   setTimeout(() => $('#instSrc').focus(), 50);
 }
@@ -907,7 +936,10 @@ async function doInstall() {
     if (r.counts.card) lines.push('人物卡 ' + r.counts.card + ' 张 → ' + (state.current || '根目录'));
     if (r.counts.coord) lines.push('服装卡 ' + r.counts.coord + ' 张 → coordinate');
     if (r.counts.mod) lines.push('mod ' + r.counts.mod + ' 个 → mods');
-    if (r.counts.unknown) lines.push('认不出的 ' + r.counts.unknown + ' 个 → 未分类');
+    if (r.skipped && r.skipped.length) {
+      lines.push('认不出的 ' + r.skipped.length + ' 个留在原地没动（比如不像 mod 的 zip）');
+      lines.push('　' + r.skipped.slice(0, 6).join('、') + (r.skipped.length > 6 ? ' …' : ''));
+    }
   }
   if (!lines.length) lines.push('什么都没动');
   if (r.entry) lines.push('', '这次操作已记录，可以在「历史记录」里整批撤销。');
@@ -947,7 +979,7 @@ async function openHistory() {
     top.appendChild(el('span', 'hist-src', e.src || ''));
     row.appendChild(top);
     const sum = ['人物卡 ' + (c.card || 0), '服装卡 ' + (c.coord || 0),
-      'mod ' + (c.mod || 0), '未分类 ' + (c.unknown || 0)].join('　');
+      'mod ' + (c.mod || 0)].join('　');
     row.appendChild(el('div', 'hist-sum', sum + '　→ ' + (e.dest || '')));
     const foot = el('div', 'hist-foot');
     const cnt = el('span', 'muted', (e.moves || []).length + ' 个文件');
@@ -1166,6 +1198,7 @@ $('#histClose').addEventListener('click', () => $('#histModal').classList.add('h
 $('#histClose2').addEventListener('click', () => $('#histModal').classList.add('hidden'));
 $('#btnRecycle').addEventListener('click', openRecycle);
 $('#idxInfo').addEventListener('click', rebuildIndex);
+$('#gameLine').addEventListener('click', () => detectGame(true));
 
 async function rebuildIndex() {
   if (!confirm('重建本地索引？\n\n会重新检查人物卡目录和 mods 目录里的每一个文件。\n没改动过的文件会直接跳过，通常十几秒；第一次建库要 30 秒左右。')) return;
