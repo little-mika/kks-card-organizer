@@ -31,6 +31,10 @@ KK folder layout and Studio data were never validated — see the README.
 - 5064 cards indexed in ~28 s once; 16577 zipmods in ~3.7 s.
 
 ### Misc
+- **English / 中文 UI.** Toggle in the top-right corner; the choice is stored in
+  `localStorage`, non-Chinese systems start in English. Translation is applied
+  at the DOM layer (`static/i18n.js`), so the Chinese strings in `app.js` stay
+  untouched.
 - Rotating log in `logs\kkcard.log`, traceback dump in `logs\crash.txt`,
   front-end errors in `logs\frontend.log`.
 - Launcher is a plain `.bat` (see README: the earlier `.vbs` was correctly

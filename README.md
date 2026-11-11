@@ -120,6 +120,10 @@ A local SQLite index (`data\kkcard.db`) caches the parsed metadata of every card
 
 Open a folder for the first time and it takes a second; open it again and the thumbnails appear immediately.
 
+### English / 中文
+
+The interface ships in both languages. The button in the top-right corner switches between **EN** and **中文**; the choice is remembered in `localStorage`. English is picked automatically on non-Chinese systems.
+
 ---
 
 ## Requirements
