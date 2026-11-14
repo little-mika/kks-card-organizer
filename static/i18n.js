@@ -64,6 +64,19 @@
     '认不出的（比如不像 mod 的 zip）→ 放进「未分类」。全部记账，可整批撤销。':
       'Anything unrecognised (e.g. a zip that is not a mod) → 「Unclassified」. Every move is logged and can be undone in bulk.',
     '还没扫描': 'Not scanned yet',
+    '卡片（前 20 个）': 'Cards (first 20)',
+    'mod 包（前 20 个）': 'Mod packs (first 20)',
+    '解包的 mod（前 20 个，会打包成 .zipmod）': 'Unpacked mods (first 20, repacked into .zipmod)',
+    '贴图（不安装，留在原处）': 'Overlays (not installed, left in place)',
+    '插件数据（前 20 个）': 'Plugin data (first 20)',
+    '这个文件夹里没有可安装的东西': 'Nothing installable in this folder',
+    '（根目录）': '(root)',
+    '带 manifest.xml + abdata 的解包 mod 会自动重新打包成 .zipmod 放进 mods，不动游戏 abdata。':
+      'Unpacked mods (manifest.xml + abdata) are repacked into .zipmod and dropped into mods — the game abdata folder is never touched.',
+    '贴图和说明文件不自动安装——卡里的 overlay 内嵌在卡里，外面这些只是素材库。':
+      'Overlays and readme files are not installed — a card carries its own overlay inside the card file, the loose PNGs are just a library.',
+    'BepInEx 的数据文件按原相对路径镜像。全部记账，可在「历史记录」里整批撤销。':
+      'Data files under BepInEx are mirrored to the same relative path. Everything is logged and can be undone from History.',
     '历史记录': 'History',
     '扫描': 'Scan',
     '开始安装': 'Install',
@@ -188,6 +201,10 @@
     '先在左边选一个文件夹，人物卡会放进那里；服装卡 → coordinate；mod → 游戏 mods；':
       'Pick a folder on the left first — character cards go there; outfits → coordinate; mods → the game mods folder; ',
     '人物卡会放进当前预览的文件夹：': 'Character cards go into the folder you are viewing: ',
+    '点一张卡看预览': 'Click a card to preview it',
+    '单击切换预览，Ctrl 单击多选': 'Click to preview, Ctrl-click to multi-select',
+    '收起 / 展开预览栏': 'Collapse / expand preview pane',
+    '拖动调整宽度': 'Drag to resize',
     '记录它引用的 zipmod。': 'records the zipmods it referenced.',
     '记录它引用的 zipmod。 批次目录里还有': 'records the zipmods it referenced. The batch folder also holds',
     '批次目录里还有': 'The batch folder also holds',
@@ -202,6 +219,19 @@
 
   var RULES = [
     [/^游戏目录：(.+)$/, 'Game folder: $1'],
+    [/^发现 (\d+) 张卡、(\d+) 个 mod 包$/, 'Found $1 cards, $2 mod packs'],
+    [/^发现 (\d+) 张卡、(\d+) 个 mod 包、(\d+) 个解包 mod（会重新打包）$/, 'Found $1 cards, $2 mod packs, $3 unpacked mods (will be repacked)'],
+    [/^发现 (\d+) 张卡、(\d+) 个 mod 包、(\d+) 个解包 mod（会重新打包）、(\d+) 张贴图（不安装），另有 (\d+) 个其它文件会跳过$/, 'Found $1 cards, $2 mod packs, $3 unpacked mods (will be repacked), $4 overlays (not installed); $5 other files skipped'],
+    [/^…还有 (\d+) 张$/, '…$1 more'],
+    [/^…还有 (\d+) 个$/, '…$1 more'],
+    [/^卡片 → (.+)；服装卡 → coordinate；mod → mods。$/, 'Cards → $1; outfits → coordinate; mods → mods.'],
+    [/^(\d+) 张卡 \/ (\d+) 个 mod \/ (\d+) 个解包 mod \/ (\d+) 张贴图 \/ (\d+) 个数据$/, '$1 cards / $2 mods / $3 unpacked / $4 overlays / $5 data'],
+    [/^(\d+) 张卡 \/ (\d+) 个 mod \/ (\d+) 个解包 mod \/ (\d+) 张贴图$/, '$1 cards / $2 mods / $3 unpacked / $4 overlays'],
+    [/^(\d+) 张卡 \/ (\d+) 个 mod \/ (\d+) 个解包 mod$/, '$1 cards / $2 mods / $3 unpacked'],
+    [/^(\d+) 张卡 \/ (\d+) 个 mod \/ (\d+) 张贴图$/, '$1 cards / $2 mods / $3 overlays'],
+    [/^(\d+) 张卡 \/ (\d+) 个 mod$/, '$1 cards / $2 mods'],
+    [/^贴图 (\d+) 张留在原处没装（要当素材用请自己拖进 UserData\\Overlays\\）$/, '$1 overlays left in place (drag them into UserData\\Overlays\\ yourself if you want them)'],
+    [/^解包的 mod (\d+) 个 → 已重新打包成 zipmod 放进 mods$/, '$1 unpacked mods → repacked as .zipmod into mods'],
     [/^认不出的 (\d+) 个留在原地没动（比如不像 mod 的 zip）$/, '$1 file(s) left untouched (e.g. a zip that is not a mod)'],
     [/^(Koikatsu Sunshine|Koikatsu|Koikatu)[\s\u00a0]+人物卡([\s\S]*)$/, '$1 character card$2'],
     [/^(Koikatsu Sunshine|Koikatsu|Koikatu)[\s\u00a0]+服装卡([\s\S]*)$/, '$1 outfit card$2'],

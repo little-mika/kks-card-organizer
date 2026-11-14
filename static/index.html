@@ -34,6 +34,8 @@
         <button class="rootbtn active" data-root="chara">人物卡</button>
         <button class="rootbtn" data-root="coord">服装卡</button>
         <button class="rootbtn" data-root="scene">场景卡</button>
+        <button class="rootbtn" data-root="mods">mod 清理</button>
+        <button class="rootbtn" data-root="plugins">插件</button>
       </div>
       <div class="side-head">
         <span>选择文件夹</span>
@@ -96,15 +98,49 @@
         <div class="grid" id="grid"></div>
       </div>
 
+      <div class="modwrap hidden" id="modWrap">
+        <div class="modbar">
+          <button class="modtab active" data-cat="orphan">真孤儿 <b id="cntOrphan">0</b></button>
+          <button class="modtab" data-cat="never">从未被引用 <b id="cntNever">0</b></button>
+          <button class="modtab" data-cat="in_use">在用 <b id="cntInUse">0</b></button>
+          <span class="grow"></span>
+          <span class="muted small" id="modInfo"></span>
+          <button class="btn danger small" id="modClean" disabled>移到清理区</button>
+          <button class="btn ghost small" id="modMore">显示更多</button>
+          <button class="btn ghost small" id="modRefresh">刷新</button>
+        </div>
+        <div class="modlist" id="modList"></div>
+      </div>
+
+      <div class="plugwrap hidden" id="plugWrap">
+        <div class="modbar">
+          <button class="modtab active" data-pcat="all">全部 <b id="pcAll">0</b></button>
+          <button class="modtab" data-pcat="problem">有问题 <b id="pcProblem">0</b></button>
+          <button class="modtab" data-pcat="ok">正常 <b id="pcOk">0</b></button>
+          <button class="modtab" data-pcat="filtered">仅 Studio <b id="pcFiltered">0</b></button>
+          <span class="grow"></span>
+          <span class="muted small" id="plugInfo"></span>
+          <button class="btn ghost small" id="plugRefresh">重新扫描</button>
+        </div>
+        <div class="modlist" id="plugList"></div>
+      </div>
+
       <div class="loading hidden" id="loading">
         <div class="spinner"></div><div id="loadingText">读取中…</div>
       </div>
     </section>
 
-    <!-- 详情抽屉 -->
-    <aside class="detail hidden" id="detail">
-      <button class="det-close" id="detClose">✕</button>
-      <div class="det-body" id="detBody"></div>
+    <!-- 右侧预览栏（常驻，可拖拽调宽） -->
+    <aside class="detail" id="detail">
+      <div class="det-resizer" id="detResizer" title="拖动调整宽度"></div>
+      <button class="det-fold" id="detFold" title="收起 / 展开预览栏">⇥</button>
+      <div class="det-body" id="detBody">
+        <div class="det-empty" id="detEmpty">
+          <div class="de-icon">🖼</div>
+          <div>点一张卡看预览</div>
+          <div class="de-sub">单击切换预览，Ctrl 单击多选</div>
+        </div>
+      </div>
     </aside>
   </div>
 </div>
@@ -171,9 +207,9 @@
         批次目录里还有 <span class="mono">_报告.html</span>，列出这些卡用过的所有 GUID。</p>
       <div class="det-warn info" id="quarNote"></div>
       <label class="chk-row">
-        <input type="checkbox" id="quarMods" checked>
+        <input type="checkbox" id="quarMods">
         <span>连带把「只被这批卡用到」的 mod 一起移走
-          <span class="muted small">（仍被其它卡引用的不动；一次要扫全库，第一次会慢十几秒）</span></span>
+          <span class="muted small">（默认只移卡；勾了才会动 mod，仅当本地库完整时可用）</span></span>
       </label>
     </div>
     <div class="modal-foot">

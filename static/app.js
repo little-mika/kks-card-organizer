@@ -37,6 +37,7 @@ const state = {
   visible: [],
   sel: new Set(),
   lastPick: null,
+  lastDetail: null,
   onlyCards: true,
   moveTarget: null,
   root: 'chara',
@@ -117,6 +118,7 @@ async function loadIndexInfo() {
 async function switchRoot(name) {
   if (state.root === name) return;
   state.root = name;
+  document.body.classList.toggle('mods-view', name === 'mods');
   document.querySelectorAll('.rootbtn').forEach((b) => {
     b.classList.toggle('active', b.dataset.root === name);
   });
@@ -131,14 +133,260 @@ async function switchRoot(name) {
   $('#pillDir').textContent = '未选择文件夹';
   $('#tbDir').textContent = '未选择文件夹';
   $('#pillCount').textContent = '—';
-  $('#detail').classList.add('hidden');
+  clearDetail();
   $('#gridWrap').classList.add('hidden');
+  if (name === 'plugins') {
+    $('#filterBar').classList.add('hidden');
+    $('#emptyState').classList.add('hidden');
+    $('#modWrap').classList.add('hidden');
+    $('#plugWrap').classList.remove('hidden');
+    $('.sidebar').classList.add('mods-mode');
+    await loadPlugins(false);
+    return;
+  }
+  $('#plugWrap').classList.add('hidden');
+  if (name === 'mods') {
+    $('#filterBar').classList.add('hidden');
+    $('#emptyState').classList.add('hidden');
+    $('#modWrap').classList.remove('hidden');
+    $('.sidebar').classList.add('mods-mode');
+    await loadMods('orphan', false);
+    return;
+  }
+  $('.sidebar').classList.remove('mods-mode');
+  $('#modWrap').classList.add('hidden');
   $('#emptyState').classList.remove('hidden');
   $('.es-icon').textContent = '🗂';
   $('.es-title').textContent = '先选一个文件夹';
   $('.es-sub').innerHTML = '左侧点开任意子文件夹，只读取该文件夹里的卡<br><span class="mono">不会递归，也不会一次加载全部</span>';
   updateSelection();
   await loadTree(true);
+}
+
+/* ------------------------------------------------------------ mod 清理 */
+const KIND_CN = {
+  chara: '人物内容', studio: '场景物件', anim: '动作', mixed: '人物+场景',
+  plugin: '插件', other: '其它', empty: '空包', missing: '文件缺失', error: '读不出',
+};
+const MODSTATE = { cat: 'orphan', offset: 0, limit: 60, total: 0, items: [] };
+const MODSEL = new Set();
+
+function updateModSel() {
+  const b = $('#modClean');
+  b.disabled = MODSEL.size === 0;
+  b.textContent = MODSEL.size ? '移到清理区 (' + MODSEL.size + ')' : '移到清理区';
+}
+
+/* ------------------------------------------------------------ 插件 */
+const PLUGSTATE = { cat: 'all', loaded: false, data: null };
+
+const PLUG_STATE_CN = {
+  missing: '缺依赖', wrongver: 'BepInEx 版本', blocked: '被拦住',
+  failed: '加载失败', filtered: '仅 Studio', older: '有新版', ok: '正常',
+};
+
+function plugMatches(r, cat) {
+  if (cat === 'all') return true;
+  if (cat === 'problem') {
+    return ['missing', 'wrongver', 'blocked', 'failed'].indexOf(r.state) >= 0;
+  }
+  return r.state === cat;
+}
+
+function fmtSize(n) {
+  if (!n) return '';
+  if (n >= 1048576) return (n / 1048576).toFixed(1) + ' MB';
+  if (n >= 1024) return Math.round(n / 1024) + ' KB';
+  return n + ' B';
+}
+
+async function loadPlugins(refresh) {
+  $('#plugList').innerHTML = '<div class="mod-empty">' +
+    (refresh ? '正在扫描 256 个 dll…' : '读取中…') + '</div>';
+  let d;
+  try {
+    d = await (await fetch('/api/plugins' + (refresh ? '?refresh=1' : ''))).json();
+  } catch (e) {
+    $('#plugList').innerHTML = '<div class="mod-empty">读取失败</div>';
+    return;
+  }
+  if (!d.ok) {
+    $('#plugList').innerHTML = '<div class="mod-empty">' +
+      esc(d.error || '扫描失败') + '</div>';
+    return;
+  }
+  PLUGSTATE.data = d;
+  PLUGSTATE.loaded = true;
+  const c = d.counts || {};
+  $('#pcAll').textContent = d.total || 0;
+  $('#pcProblem').textContent = (c.missing || 0) + (c.wrongver || 0) +
+    (c.blocked || 0) + (c.failed || 0);
+  $('#pcOk').textContent = c.ok || 0;
+  $('#pcFiltered').textContent = c.filtered || 0;
+  $('#plugInfo').textContent = 'BepInEx ' + (d.bepinex || '?') +
+    ' · 扫描于 ' + (d.scanned_at || '?');
+  renderPlugins();
+}
+
+function renderPlugins() {
+  const box = $('#plugList');
+  const d = PLUGSTATE.data;
+  if (!d) { box.innerHTML = ''; return; }
+  const rows = (d.plugins || []).filter((r) => plugMatches(r, PLUGSTATE.cat));
+  if (!rows.length) {
+    box.innerHTML = '<div class="mod-empty">这个分类里没有插件</div>';
+    return;
+  }
+  box.innerHTML = '';
+  rows.forEach((r) => {
+    const row = el('div', 'plugrow s-' + r.state);
+
+    const main = el('div', 'plugmain');
+    const head = el('div', 'plughead');
+    head.appendChild(el('span', 'plugstate', PLUG_STATE_CN[r.state] || r.state));
+    head.appendChild(el('span', 'plugname', r.name || r.file));
+    if (r.version) head.appendChild(el('span', 'plugver', 'v' + r.version));
+    main.appendChild(head);
+
+    const meta = el('div', 'plugmeta');
+    meta.appendChild(el('span', 'mono', r.rel));
+    if (r.size) meta.appendChild(el('span', '', ' · ' + fmtSize(r.size)));
+    main.appendChild(meta);
+
+    if (r.deps && r.deps.length) {
+      const deps = el('div', 'plugdeps');
+      deps.textContent = '依赖：' + r.deps.map((x) =>
+        x.guid + (x.min ? ' ≥' + x.min : '')).join('，');
+      main.appendChild(deps);
+    }
+
+    if (r.missing && r.missing.length) {
+      const warn = el('div', 'plugwarn');
+      warn.textContent = '问题：' + r.missing.map((m) =>
+        m.guid + ' 需要 ≥' + (m.min || '?') +
+        (m.have ? '（现有 ' + m.have + '）' : '（未找到）')).join('；');
+      main.appendChild(warn);
+    }
+    if (r.wrong_bepinex) {
+      const warn = el('div', 'plugwarn soft');
+      warn.textContent = '这个插件要求 BepInEx ' + r.wrong_bepinex +
+        '，当前是 ' + (d.bepinex || '?') + '（通常只是警告）';
+      main.appendChild(warn);
+    }
+    if (r.detail) {
+      main.appendChild(el('div', 'plugdetail', r.detail));
+    }
+
+    row.appendChild(main);
+
+    const act = el('div', 'plugact');
+    const isOff = /\.(off|disabled)$/i.test(r.rel) || !!r.disabled_twin;
+    const btn = el('button', 'btn ghost small', isOff ? '启用' : '禁用');
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      btn.textContent = '处理中…';
+      try {
+        const res = await (await fetch('/api/plugintoggle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rel: r.rel, enable: isOff }),
+        })).json();
+        if (!res.ok) {
+          alert('失败：' + (res.error || '未知错误'));
+          btn.disabled = false;
+          btn.textContent = isOff ? '启用' : '禁用';
+          return;
+        }
+        await loadPlugins(true);
+      } catch (e) {
+        alert('失败：' + e.message);
+        btn.disabled = false;
+        btn.textContent = isOff ? '启用' : '禁用';
+      }
+    });
+    act.appendChild(btn);
+    row.appendChild(act);
+
+    box.appendChild(row);
+  });
+}
+
+async function loadMods(cat, append) {
+  MODSTATE.cat = cat;
+  if (!append) { MODSTATE.offset = 0; MODSTATE.items = []; }
+  $('#modList').innerHTML = '<div class="mod-empty">读取中…</div>';
+  let d;
+  try {
+    d = await (await fetch('/api/orphans?cat=' + encodeURIComponent(cat) +
+      '&offset=' + MODSTATE.offset + '&limit=' + MODSTATE.limit)).json();
+  } catch (e) {
+    $('#modList').innerHTML = '<div class="mod-empty">读取失败</div>';
+    return;
+  }
+  MODSTATE.total = d.total || 0;
+  MODSTATE.items = append ? MODSTATE.items.concat(d.items || []) : (d.items || []);
+  MODSTATE.offset = MODSTATE.items.length;
+  if (d.counts) {
+    $('#cntOrphan').textContent = d.counts.orphan || 0;
+    $('#cntNever').textContent = d.counts.never || 0;
+    $('#cntInUse').textContent = d.counts.in_use || 0;
+  }
+  $('#modInfo').textContent = '已显示 ' + MODSTATE.items.length + ' / ' + MODSTATE.total;
+  renderMods();
+}
+
+function renderMods() {
+  const box = $('#modList');
+  box.textContent = '';
+  if (!MODSTATE.items.length) {
+    box.appendChild(el('div', 'mod-empty', '这里没有东西'));
+    return;
+  }
+  MODSTATE.items.forEach((it) => {
+    const row = el('div', 'modrow');
+    if (MODSEL.has(it.path)) row.classList.add('picked');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'modcb';
+    cb.checked = MODSEL.has(it.path);
+    cb.addEventListener('change', () => {
+      if (cb.checked) MODSEL.add(it.path); else MODSEL.delete(it.path);
+      row.classList.toggle('picked', cb.checked);
+      updateModSel();
+    });
+    row.appendChild(cb);
+    const thumb = el('div', 'modthumb');
+    if (it.thumbs && it.thumbs.length) {
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.src = '/api/modthumb?path=' + encodeURIComponent(it.path) +
+                '&entry=' + encodeURIComponent(it.thumbs[0]);
+      thumb.appendChild(img);
+    } else {
+      thumb.textContent = '无图';
+    }
+    const main = el('div', 'modmain');
+    main.appendChild(el('div', 'modfile', it.file));
+    const meta = el('div', 'modmeta');
+    meta.appendChild(el('span', 'tag ' + (it.kind || 'other'), KIND_CN[it.kind] || it.kind || '?'));
+    meta.appendChild(el('span', 'muted small', fmtSize(it.size)));
+    if (it.ever) meta.appendChild(el('span', 'muted small', '曾引用 ' + it.ever + ' 张'));
+    if (it.now) meta.appendChild(el('span', 'muted small', '当前 ' + it.now + ' 张'));
+    main.appendChild(meta);
+    if (it.items && it.items.length) {
+      const items = el('div', 'moditems');
+      it.items.slice(0, 8).forEach((s) => items.appendChild(el('span', 'moditem', s)));
+      if (it.item_count > 8) items.appendChild(el('span', 'moditem more', '+' + (it.item_count - 8)));
+      main.appendChild(items);
+    }
+    if (it.name || it.author) {
+      main.appendChild(el('div', 'muted small',
+        (it.name || '') + (it.author ? ' · ' + it.author : '')));
+    }
+    row.appendChild(thumb);
+    row.appendChild(main);
+    box.appendChild(row);
+  });
 }
 
 /* ------------------------------------------------------------ 目录树 */
@@ -309,7 +557,7 @@ function pickDir(node, row, justExpand) {
     $('#tbDir').textContent = node.path;
     $('#gridWrap').classList.add('hidden');
     $('#loading').classList.add('hidden');
-    $('#detail').classList.add('hidden');
+    clearDetail();
     $('#emptyState').classList.remove('hidden');
     $('.es-icon').textContent = '📁';
     $('.es-title').textContent = '这个文件夹本身没有卡';
@@ -328,7 +576,7 @@ async function loadDir(dir, own) {
   state.lastPick = null;
   $('#pillDir').textContent = (dir || '(根)') + (state.root === 'coord' ? ' · 服装卡' : '');
   $('#tbDir').textContent = dir || '(根)';
-  $('#detail').classList.add('hidden');
+  clearDetail();
   $('#emptyState').classList.add('hidden');
   $('#gridWrap').classList.add('hidden');
   $('#loading').classList.remove('hidden');
@@ -498,10 +746,16 @@ function onCardClick(c, ev) {
   }
   state.lastPick = name;
   updateSelection();
-  if (state.sel.size === 1 && state.sel.has(name)) {
+  if (state.sel.has(name)) {
     showDetail(c, relOf(c));
-  } else if (state.sel.size > 1) {
-    $('#detail').classList.add('hidden');
+    return;
+  }
+  if (state.lastDetail === name) {
+    const rest = [...state.sel];
+    const last = rest.length ? rest[rest.length - 1] : null;
+    const obj = last ? state.visible.find((x) => x.name === last) : null;
+    if (obj) showDetail(obj, relOf(obj));
+    else clearDetail();
   }
 }
 
@@ -521,9 +775,19 @@ function updateSelection() {
 }
 
 /* ------------------------------------------------------------ 详情 */
+const DET_EMPTY_HTML =
+  '<div class="det-empty"><div class="de-icon">🖼</div>' +
+  '<div>点一张卡看预览</div>' +
+  '<div class="de-sub">单击切换预览，Ctrl 单击多选</div></div>';
+
+function clearDetail() {
+  state.lastDetail = null;
+  const body = $('#detBody');
+  if (body) body.innerHTML = DET_EMPTY_HTML;
+}
+
 function showDetail(c, rel) {
-  const d = $('#detail');
-  d.classList.remove('hidden');
+  state.lastDetail = c.name;
   const body = $('#detBody');
   body.textContent = '';
 
@@ -858,11 +1122,16 @@ function openInstall() {
   $('#instPreview').textContent = '';
   $('#instInfo').textContent = '还没扫描';
   $('#instOk').disabled = true;
-  $('#instHint').innerHTML = (state.current
-    ? '人物卡会放进当前预览的文件夹：<b>' + esc(state.current) + '</b>'
-    : '先在左边选一个文件夹，人物卡会放进那里')
-    + '；服装卡 → coordinate；mod → 游戏 mods；<br>'
-    + '认不出的（比如不像 mod 的 zip）原样留在原地，不动它们。全部记账，可在「历史记录」里整批撤销。';
+  const dest = state.current ? state.current : (window.I18N ? I18N.t('（根目录）') : '（根目录）');
+  $('#instHint').innerHTML = '';
+  $('#instHint').appendChild(el('div', '',
+    '卡片 → ' + esc(dest) + '；服装卡 → coordinate；mod → mods。'));
+  $('#instHint').appendChild(el('div', 'muted',
+    '带 manifest.xml + abdata 的解包 mod 会自动重新打包成 .zipmod 放进 mods，不动游戏 abdata。'));
+  $('#instHint').appendChild(el('div', 'muted',
+    '贴图和说明文件不自动安装——卡里的 overlay 内嵌在卡里，外面这些只是素材库。'));
+  $('#instHint').appendChild(el('div', 'muted',
+    'BepInEx 的数据文件按原相对路径镜像。全部记账，可在「历史记录」里整批撤销。'));
   $('#instModal').classList.remove('hidden');
   setTimeout(() => $('#instSrc').focus(), 50);
 }
@@ -888,6 +1157,9 @@ async function scanInstall() {
   box.textContent = '';
   const head = el('div', 'inst-sum',
     '发现 ' + r.total_cards + ' 张卡、' + r.total_mods + ' 个 mod 包' +
+    (r.total_packs ? '、' + r.total_packs + ' 个解包 mod（会重新打包）' : '') +
+    (r.total_overlays ? '、' + r.total_overlays + ' 张贴图（不安装）' : '') +
+    (r.total_datas ? '、' + r.total_datas + ' 个插件数据文件' : '') +
     (r.others ? '，另有 ' + r.others + ' 个其它文件会跳过' : ''));
   box.appendChild(head);
   if (r.total_cards) {
@@ -904,11 +1176,35 @@ async function scanInstall() {
     });
     if (r.total_mods > 20) box.appendChild(el('div', 'inst-row muted', '…还有 ' + (r.total_mods - 20) + ' 个'));
   }
-  if (!r.total_cards && !r.total_mods) {
-    box.appendChild(el('div', 'inst-row muted', '这个文件夹里没有卡，也没有 .zipmod'));
+  if (r.total_packs) {
+    box.appendChild(el('div', 'inst-lab', '解包的 mod（前 20 个，会打包成 .zipmod）'));
+    r.packs.slice(0, 20).forEach((p) => {
+      box.appendChild(el('div', 'inst-row', p.name + '　→ ' + p.guid + '.zipmod　' + fmtSize(p.size)));
+    });
+    if (r.total_packs > 20) box.appendChild(el('div', 'inst-row muted', '…还有 ' + (r.total_packs - 20) + ' 个'));
   }
-  $('#instInfo').textContent = r.total_cards + ' 张卡 / ' + r.total_mods + ' 个 mod';
-  $('#instOk').disabled = !(r.total_cards || r.total_mods);
+  if (r.total_overlays) {
+    box.appendChild(el('div', 'inst-lab', '贴图（不安装，留在原处）'));
+    r.overlays.slice(0, 20).forEach((o) => {
+      box.appendChild(el('div', 'inst-row', o.name));
+    });
+    if (r.total_overlays > 20) box.appendChild(el('div', 'inst-row muted', '…还有 ' + (r.total_overlays - 20) + ' 张'));
+  }
+  if (r.total_datas) {
+    box.appendChild(el('div', 'inst-lab', '插件数据（前 20 个）'));
+    r.datas.slice(0, 20).forEach((d) => {
+      box.appendChild(el('div', 'inst-row', d.root + '\\' + d.rel));
+    });
+    if (r.total_datas > 20) box.appendChild(el('div', 'inst-row muted', '…还有 ' + (r.total_datas - 20) + ' 个'));
+  }
+  if (!r.total_cards && !r.total_mods && !r.total_packs && !r.total_overlays && !r.total_datas) {
+    box.appendChild(el('div', 'inst-row muted', '这个文件夹里没有可安装的东西'));
+  }
+  $('#instInfo').textContent = r.total_cards + ' 张卡 / ' + r.total_mods + ' 个 mod'
+    + (r.total_packs ? ' / ' + r.total_packs + ' 个解包 mod' : '')
+    + (r.total_overlays ? ' / ' + r.total_overlays + ' 张贴图' : '')
+    + (r.total_datas ? ' / ' + r.total_datas + ' 个数据' : '');
+  $('#instOk').disabled = !(r.total_cards || r.total_mods || r.total_packs || r.total_datas);
 }
 
 async function doInstall() {
@@ -936,6 +1232,28 @@ async function doInstall() {
     if (r.counts.card) lines.push('人物卡 ' + r.counts.card + ' 张 → ' + (state.current || '根目录'));
     if (r.counts.coord) lines.push('服装卡 ' + r.counts.coord + ' 张 → coordinate');
     if (r.counts.mod) lines.push('mod ' + r.counts.mod + ' 个 → mods');
+    if (r.counts.pack) lines.push('解包的 mod ' + r.counts.pack + ' 个 → 已重新打包成 zipmod 放进 mods');
+    if (r.counts.data) lines.push('插件数据 ' + r.counts.data + ' 个 → 按原路径镜像');
+    if (r.overlay_kept && r.overlay_kept.length) {
+      lines.push('贴图 ' + r.overlay_kept.length + ' 张留在原处没装（要当素材用请自己拖进 UserData\\Overlays\\）');
+    }
+    if (r.replaced && r.replaced.length) {
+      lines.push('换掉了 ' + r.replaced.length +
+        ' 个旧版同 GUID 的包（已挪进隔离区，随时可还原）');
+      r.replaced.slice(0, 5).forEach(x => {
+        lines.push('　' + String(x.old || '').split(/[\\/]/).pop() + ' → ' + x.new);
+      });
+      if (r.replaced.length > 5) lines.push('　…还有 ' + (r.replaced.length - 5) + ' 个');
+    }
+    if (r.missing && r.missing.length) {
+      lines.push('');
+      lines.push('⚠ 装完发现 ' + r.missing.length + ' 个 mod 依赖没装上，这些卡会缺部件：');
+      r.missing.slice(0, 8).forEach(x => {
+        lines.push('　' + x.guid + '（' + x.cards.slice(0, 2).join('、') +
+          (x.cards.length > 2 ? ' 等 ' + x.cards.length + ' 张' : '') + '）');
+      });
+      if (r.missing.length > 8) lines.push('　…还有 ' + (r.missing.length - 8) + ' 个');
+    }
     if (r.skipped && r.skipped.length) {
       lines.push('认不出的 ' + r.skipped.length + ' 个留在原地没动（比如不像 mod 的 zip）');
       lines.push('　' + r.skipped.slice(0, 6).join('、') + (r.skipped.length > 6 ? ' …' : ''));
@@ -1129,11 +1447,52 @@ async function doRestore() {
 }
 
 /* ------------------------------------------------------------ 事件 */
-$('#detClose').addEventListener('click', () => {
-  $('#detail').classList.add('hidden');
-  state.sel.clear();
-  updateSelection();
-});
+/* 右侧预览栏宽度：拖拽调整 + 记忆 */
+(function initDetResize() {
+  const KEY = 'kkcard.detw';
+  const el = $('#detail');
+  const grip = $('#detResizer');
+  if (!el || !grip) return;
+  const saved = parseInt(localStorage.getItem(KEY) || '', 10);
+  if (saved >= 240 && saved <= 720) el.style.setProperty('--det-w', saved + 'px');
+  let drag = false;
+  grip.addEventListener('pointerdown', (ev) => {
+    drag = true;
+    grip.classList.add('dragging');
+    grip.setPointerCapture(ev.pointerId);
+    ev.preventDefault();
+  });
+  grip.addEventListener('pointermove', (ev) => {
+    if (!drag) return;
+    const rect = el.getBoundingClientRect();
+    let w = rect.right - ev.clientX;
+    w = Math.max(240, Math.min(720, w));
+    el.style.setProperty('--det-w', w + 'px');
+    localStorage.setItem(KEY, String(Math.round(w)));
+  });
+  const stop = (ev) => {
+    if (!drag) return;
+    drag = false;
+    grip.classList.remove('dragging');
+    try { grip.releasePointerCapture(ev.pointerId); } catch (e) {}
+  };
+  grip.addEventListener('pointerup', stop);
+  grip.addEventListener('pointercancel', stop);
+
+  const fold = $('#detFold');
+  if (!fold) return;
+  const paintFold = () => {
+    fold.textContent = el.classList.contains('folded') ? '\u21e4' : '\u21e5';
+  };
+  if (localStorage.getItem('kkcard.detfold') === '1') el.classList.add('folded');
+  paintFold();
+  fold.addEventListener('click', () => {
+    const now = el.classList.toggle('folded');
+    localStorage.setItem('kkcard.detfold', now ? '1' : '0');
+    paintFold();
+  });
+})();
+
 $('#btnCollapse').addEventListener('click', async () => {
   state.nodes.forEach((n) => { n.open = false; });
   const box = $('#tree');
@@ -1243,12 +1602,60 @@ document.querySelectorAll('.rootbtn').forEach((b) => {
   b.addEventListener('click', () => { if (!b.disabled) switchRoot(b.dataset.root); });
 });
 
+document.querySelectorAll('.modtab').forEach((b) => {
+  b.addEventListener('click', async () => {
+    document.querySelectorAll('.modtab').forEach((x) => x.classList.toggle('active', x === b));
+    await loadMods(b.dataset.cat, false);
+  });
+});
+$('#modMore').addEventListener('click', () => loadMods(MODSTATE.cat, true));
+$('#modRefresh').addEventListener('click', () => loadMods(MODSTATE.cat, false));
+
+document.querySelectorAll('[data-pcat]').forEach((b) => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('[data-pcat]').forEach((x) => x.classList.toggle('active', x === b));
+    PLUGSTATE.cat = b.dataset.pcat;
+    renderPlugins();
+  });
+});
+$('#plugRefresh').addEventListener('click', () => loadPlugins(true));
+
+$('#modClean').addEventListener('click', async () => {
+  if (!MODSEL.size) return;
+  const list = Array.from(MODSEL);
+  if (!confirm('把选中的 ' + list.length + ' 个 mod 移到清理区？\n\n' +
+               '只会移动文件，不删除；清理区里留有清单，可以搬回来。')) return;
+  const btn = $('#modClean');
+  btn.disabled = true;
+  btn.textContent = '移动中…';
+  let r;
+  try {
+    r = await (await fetch('/api/modclean', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: list, recycle: RECYCLE }),
+    })).json();
+  } catch (e) {
+    alert('移动失败：' + e);
+    updateModSel();
+    return;
+  }
+  if (r.error) { alert(r.error); updateModSel(); return; }
+  MODSEL.clear();
+  updateModSel();
+  const mb = (r.size / 1048576).toFixed(1);
+  alert('已移走 ' + r.moved + ' 个 mod（' + mb + ' MB）' +
+        (r.errors && r.errors.length ? '\n' + r.errors.length + ' 个失败' : '') +
+        (r.batch ? '\n\n清理区：' + r.batch : ''));
+  await loadMods(MODSTATE.cat, false);
+});
+
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (!$('#moveModal').classList.contains('hidden')) {
       $('#moveModal').classList.add('hidden');
     } else {
-      $('#detClose').click();
+      clearDetail();
     }
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
