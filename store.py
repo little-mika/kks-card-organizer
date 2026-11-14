@@ -12,6 +12,7 @@
   meta(k, v)                            附带信息（mods 根目录等）
 """
 import json
+import time
 import os
 import sqlite3
 import threading
@@ -37,6 +38,10 @@ CREATE TABLE IF NOT EXISTS mods(
 );
 CREATE INDEX IF NOT EXISTS idx_mods_guid ON mods(guid);
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS guid_history(
+  guid TEXT PRIMARY KEY, ever_cards INTEGER DEFAULT 0,
+  first_seen TEXT, last_seen TEXT
+);
 """
 
 
@@ -102,6 +107,13 @@ def _put_card(path, st, data, guids):
     if guids:
         c.executemany("INSERT INTO card_refs(card_path, guid) VALUES(?,?)",
                       [(path, g) for g in guids])
+        if guids:
+            now = time.strftime("%Y-%m-%d %H:%M:%S")
+            c.executemany(
+                "INSERT INTO guid_history(guid, ever_cards, first_seen, last_seen) "
+                "VALUES(?,1,?,?) ON CONFLICT(guid) DO UPDATE SET "
+                "ever_cards=MAX(ever_cards,excluded.ever_cards), last_seen=excluded.last_seen",
+                [(g, now, now) for g in guids])
 
 
 def upsert_card(path, hint=None, force=False):
@@ -338,3 +350,56 @@ def set_meta(k, v):
         _c().execute("INSERT OR REPLACE INTO meta(k, v) VALUES(?,?)",
                      (k, json.dumps(v, ensure_ascii=False)))
         _c().commit()
+
+
+def all_meta(prefix=""):
+    """一次取出全部 meta（或某个前缀的），省掉逐个查库。"""
+    with _lock:
+        if prefix:
+            rows = _c().execute("SELECT k,v FROM meta WHERE k LIKE ?",
+                                (prefix + "%",)).fetchall()
+        else:
+            rows = _c().execute("SELECT k,v FROM meta").fetchall()
+    out = {}
+    for k, v in rows:
+        try:
+            out[k] = json.loads(v)
+        except Exception:
+            pass
+    return out
+
+
+def backfill_history():
+    """把当前 card_refs 的引用数当作历史峰值写入（只升不降）。"""
+    with _lock:
+        c = _c()
+        rows = c.execute("SELECT guid, COUNT(*) FROM card_refs GROUP BY guid").fetchall()
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        c.executemany(
+            "INSERT INTO guid_history(guid, ever_cards, first_seen, last_seen) "
+            "VALUES(?,?,?,?) ON CONFLICT(guid) DO UPDATE SET "
+            "ever_cards=MAX(ever_cards,excluded.ever_cards)",
+            [(g, n, now, now) for g, n in rows])
+        c.commit()
+    return len(rows)
+
+
+def orphans():
+    """mods 表按引用情况分三类，并给出历史峰值。"""
+    with _lock:
+        rows = _c().execute(
+            "SELECT m.path, m.guid, COALESCE(h.ever_cards,0), "
+            "  (SELECT COUNT(*) FROM card_refs r WHERE r.guid=m.guid) "
+            "FROM mods m LEFT JOIN guid_history h ON h.guid=m.guid"
+        ).fetchall()
+    out = {"in_use": [], "orphan": [], "never": []}
+    for path, guid, ever, cur in rows:
+        item = {"path": path, "guid": guid,
+                "ever": int(ever or 0), "now": int(cur or 0)}
+        if cur > 0:
+            out["in_use"].append(item)
+        elif (ever or 0) > 0:
+            out["orphan"].append(item)
+        else:
+            out["never"].append(item)
+    return out

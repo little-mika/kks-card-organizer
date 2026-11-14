@@ -55,7 +55,7 @@ Cards are shown as a thumbnail grid with a **mod-count badge**. Anything in the 
 
 ### Card details
 
-Click a card and you get the full-size image plus every zipmod GUID it references, grouped by how it is used:
+Click a card and the right-hand panel (permanent, resizable, collapsible) shows the full-size image plus every zipmod GUID it references, grouped by how it is used:
 
 ```
 ZMX008                 5th outfit · outfit · gloves · 4th outfit · outfit · gloves
@@ -63,6 +63,35 @@ yamadamod.accprim      5th outfit · accessory slot ×46 · 4th outfit · access
 HeadMod                face · head shape
 moderchan.CharamakerSupportMOD   face · nose · body · paint 2
 ```
+
+Single click selects and previews; `Ctrl`+click adds to the selection while the preview follows the card you clicked last.
+
+### Mod cleanup
+
+The fourth sidebar entry, **mod 清理**, lists mods by how they are referenced:
+
+| Tab | Meaning |
+|---|---|
+| 真孤儿 | some card used to reference it, no card does now |
+| 从未被引用 | no card has ever referenced it |
+| 在用 | currently referenced |
+
+Each row shows the file, a content tag (人物内容 / 场景物件 / 动作 / 插件), size, manifest name and author, the item names read out of the pack's `abdata/list/characustom/*.csv`, and a thumbnail when the pack has one — so a mod you have never seen before still tells you what it is. Tick rows and move them to the cleanup folder; nothing is deleted, and a `_清单.json` goes with the batch.
+
+### Plugins
+
+The fifth sidebar entry, **插件**, lists every dll under `BepInEx\plugins` together with its **actual load state**:
+
+| Tab | Meaning |
+|---|---|
+| 全部 | every dll that declares a plugin class |
+| 有问题 | missing dependency / blocked by one / failed to load / wrong BepInEx version |
+| 正常 | the log says it loaded |
+| 仅 Studio | declares `BepInProcess`, so it only loads in the Studio — expected |
+
+The state is built from two sources. Mono.Cecil reads `BepInPlugin` (GUID, name, version), `BepInDependency` (what it needs and the minimum version) and `BepInProcess` straight out of each dll; then `BepInEx\LogOutput.log` is parsed for the sentences "loaded", "missing dependencies", "skipped because a dependency was not loaded", "process filters" and "targets a wrong version of BepInEx". **The log wins** — some plugins are mixed-mode dlls (e.g. `KKS_OverlayMods.dll`, which contains KSOX) whose GUID Cecil cannot read, so a pure dependency-table check would report them as missing.
+
+Each row has an enable/disable button that renames `.dll` to `.dll.off` and back. Files are never deleted.
 
 ### Filters
 
@@ -104,9 +133,30 @@ Point the tool at the folder you just extracted from an archive, and it sorts th
 | outfit card | `UserData\coordinate` |
 | `.zipmod` | your mods folder |
 | `.zip` that contains `manifest.xml` or `abdata/` | your mods folder |
-| anything it cannot identify | **stays where it is** — nothing is created, nothing is moved |
+| **unpacked mod** — a folder holding both `manifest.xml` and an `abdata\` tree | **re-packed into `mods\<guid>.zipmod`** — the game's `abdata\` is never written to |
+| **plugin data** — anything under a `BepInEx\` folder (e.g. `BepInEx\Stiletto\*.txt` shoe tables) | mirrored to the same relative path under the game root |
+| overlay textures and readme files | **left where they are** — see below |
+| anything else | **stays where it is** — nothing is created, nothing is moved |
+
+**Why unpacked mods get re-packed instead of copied over `abdata`.** A character
+pack often ships its mod already unzipped: a folder with `manifest.xml` next to
+`abdata\chara\*.unity3d` and `abdata\list\characustom\*.csv`. Dropping those
+files into the game's own `abdata\` does work, but it is the old "hard mod"
+route — a game update or reinstall wipes them, KKManager cannot see them, and
+two mods using the same generic CSV name (`top.csv`, `bot.csv`) overwrite each
+other silently. Packing them back into a `.zipmod` keeps the base install
+untouched and makes the mod a normal, removable one.
+
+**Why overlay PNGs are not installed.** A card carries its overlay textures
+*inside the card file* (`KKEx` → `KSOX` → `FaceOver` / `BodyOver` / `EyeOver` …),
+so loading the card needs no file on disk. The loose `eye L.png`,
+`face_original_Diffuse.png` files in a pack are a texture library for Maker —
+useful only if you want to paint a character yourself. Copy the ones you want
+into `UserData\Overlays\` by hand.
 
 There is no "unsorted" folder. If you want one, make it yourself (right-click → 新建文件夹 in the app, or in Explorer) and pick it as the target — the tool never decides for you.
+
+**Duplicate handling and dependency check.** Before a mod is copied in, its `manifest.xml` is read and the GUID is compared against what is already installed. Same GUID and the installed copy is older or smaller → that copy is moved to quarantine and the incoming one takes its place. Same GUID and a larger copy is already there → the incoming file is skipped. When the move finishes, every installed card is re-parsed and any GUID it references but cannot find is listed, so a missing part shows up in the result dialog instead of hours later in the game.
 
 Every install is recorded (file moves only, no copies) and the last 10 runs can be **undone one by one** from the Install dialog.
 
@@ -121,6 +171,12 @@ A local SQLite index (`data\kkcard.db`) caches the parsed metadata of every card
 | Mod index (16 577 zipmods) | ~3.7 s | instant |
 
 Open a folder for the first time and it takes a second; open it again and the thumbnails appear immediately.
+
+The index stays current incrementally. Each directory's mtime is stored, so a
+quarantine sweep only re-reads folders that actually changed, capped at 8 seconds
+per run and resumed on the next one — a no-op refresh finishes in a few
+hundredths of a second. Entries for cards that no longer exist on disk are
+pruned automatically once the DB is more than 5% larger than the real count.
 
 ### English / 中文
 
@@ -203,7 +259,9 @@ Everything is pure Python — the included msgpack decoder handles the subset th
 server.py          HTTP server + JSON API + quarantine / install / restore logic
 kklib.py           card + zipmod parsing (PNG tail, msgpack, manifests, content profiling)
 store.py           SQLite index
-static/            index.html, style.css, app.js  (no framework, no CDN)
+plugins.py         plugin inventory: merges Mono.Cecil scan + LogOutput.log verdicts
+tools/scan_plugins.ps1   the Cecil scanner invoked by plugins.py
+static/            index.html, style.css, app.js, i18n.js  (no framework, no CDN)
 data/              kkcard.db, thumbnails, settings   (created on first run, gitignored)
 logs/              kkcard.log, crash.txt, frontend.log (created on first run, gitignored)
 ```
@@ -223,7 +281,13 @@ Everything the UI does is a plain JSON call, so you can script it:
 | `POST /api/install` | scan / install a folder |
 | `POST /api/recycle` · `/api/restore` | list / restore quarantine batches |
 | `POST /api/instlog` · `/api/undo` | list / undo install runs |
+| `GET /api/index` | index stats |
 | `POST /api/index` | rebuild the index |
+| `GET /api/orphans?cat=summary\|in_use\|orphan\|never` | mods by reference state |
+| `GET /api/plugins?refresh=1` | plugin inventory with load verdicts |
+| `POST /api/plugintoggle` | disable / enable one plugin (`rel`, `enable`) |
+| `GET /api/modthumb?path=&entry=` | thumbnail extracted from a zipmod |
+| `POST /api/modclean` | move selected mods to quarantine |
 
 ## Logs
 

@@ -18,7 +18,7 @@ Sideloader 把 zipmod 引用放在 data["info"] = 一组 msgpack(ResolveInfo)，
 场景卡结构不同：依赖写在顶层 msgpack 的 ExtendedSaveData 里，
 key 同样是 com.bepis.sideloader.universalautoresolver，值也是 [version, {"info": [...]}]。
 """
-import struct, zipfile, os, re
+import struct, zipfile, os, re, csv, io
 
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
 PNG_END = b"IEND\xae\x42\x60\x82"
@@ -555,3 +555,76 @@ def profile_zipmod(zipmod_path):
         "chara_list": has_chara_list,
         "studio": has_studio,
     }
+
+
+def _decode_text(b):
+    for enc in ("utf-8-sig", "cp932", "utf-16", "latin-1"):
+        try:
+            return b.decode(enc)
+        except Exception:
+            continue
+    return b.decode("latin-1", "replace")
+
+
+def profile_zipmod_detail(zipmod_path, max_items=12, max_thumbs=4):
+    """比 profile_zipmod 更细：给人工看的「这个 mod 到底是什么」。"""
+    out = dict(profile_zipmod(zipmod_path))
+    out.update({"name": "", "author": "", "website": "", "description": "",
+                "items": [], "item_count": 0, "thumbs": []})
+    try:
+        with zipfile.ZipFile(zipmod_path) as z:
+            names = z.namelist()
+            low = [n.replace("\\", "/").lower() for n in names]
+            mi = next((i for i, n in enumerate(low)
+                       if n.split("/")[-1] == "manifest.xml"), None)
+            if mi is not None:
+                txt = _decode_text(z.read(names[mi]))
+
+                def tag(t):
+                    m = re.search(r"<%s[^>]*>(.*?)</%s>" % (t, t), txt, re.S)
+                    return m.group(1).strip() if m else ""
+
+                out["name"] = tag("name")
+                out["author"] = tag("author")
+                out["website"] = tag("website")
+                out["description"] = tag("description")
+            csvs = [names[i] for i, n in enumerate(low)
+                    if ("/abdata/list/characustom/" in n or
+                        n.startswith("abdata/list/characustom/")) and n.endswith(".csv")]
+            seen = set()
+            for cn in csvs[:6]:
+                try:
+                    txt = _decode_text(z.read(cn)[:65536])
+                except Exception:
+                    continue
+                lines = txt.splitlines()
+                hdr_i = next((i for i, l in enumerate(lines[:12])
+                              if l.strip().lower().startswith("id,")), None)
+                if hdr_i is None:
+                    continue
+                try:
+                    rows = list(csv.reader(io.StringIO("\n".join(lines[hdr_i:]))))
+                except Exception:
+                    continue
+                if not rows:
+                    continue
+                cols = [c.strip().lower() for c in rows[0]]
+                ni = cols.index("name") if "name" in cols else 3
+                for row in rows[1:401]:
+                    if len(row) <= ni:
+                        continue
+                    label = row[ni].strip()
+                    if not label or label in seen:
+                        continue
+                    seen.add(label)
+                    out["items"].append(label)
+            out["item_count"] = len(seen)
+            for i, n in enumerate(low):
+                if n.endswith(".png") and "/thumb/" in n:
+                    out["thumbs"].append(names[i])
+                    if len(out["thumbs"]) >= max_thumbs:
+                        break
+    except Exception:
+        pass
+    out["items"] = out["items"][:max_items]
+    return out

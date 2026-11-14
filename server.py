@@ -14,6 +14,8 @@ import os
 import sys
 import json
 import io
+import re
+import zipfile
 import shutil
 import hashlib
 import argparse
@@ -27,10 +29,11 @@ import urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-VERSION = "0.1-beta"
+VERSION = "0.6-beta"
 sys.path.insert(0, HERE)
 import kklib  # noqa: E402
 import store  # noqa: E402
+import plugins as plugmod  # noqa: E402
 
 # ---------------------------------------------------------------- 日志
 # 出问题的时候把现场留在 logs\ 里，方便回头查。
@@ -323,6 +326,93 @@ def make_thumb(src):
 
 
 # ----------------------------------------------------------------- http
+_PROFILE_CACHE = {}
+_PROFILE_LOCK = threading.Lock()
+
+
+def _mod_profile(path, size=0, mtime=0):
+    """带缓存的 zipmod 内容画像；只读 zip 目录与少量 CSV。"""
+    key = (path, size, mtime)
+    with _PROFILE_LOCK:
+        hit = _PROFILE_CACHE.get(key)
+    if hit is not None:
+        return hit
+    try:
+        d = kklib.profile_zipmod_detail(path)
+    except Exception:
+        d = {"kind": "error", "items": [], "thumbs": []}
+    with _PROFILE_LOCK:
+        if len(_PROFILE_CACHE) > 20000:
+            _PROFILE_CACHE.clear()
+        _PROFILE_CACHE[key] = d
+    return d
+
+
+def _orphans_payload(q):
+    cat = (q.get("cat") or ["summary"])[0]
+    try:
+        offset = max(0, int((q.get("offset") or ["0"])[0] or 0))
+    except Exception:
+        offset = 0
+    try:
+        limit = min(200, max(1, int((q.get("limit") or ["60"])[0] or 60)))
+    except Exception:
+        limit = 60
+    data = store.orphans()
+    counts = {k: len(v) for k, v in data.items()}
+    if cat == "summary":
+        return {"counts": counts}
+    items = data.get(cat) or []
+    total = len(items)
+    out = []
+    for it in items[offset:offset + limit]:
+        p = it["path"]
+        try:
+            st = os.stat(p)
+            prof = _mod_profile(p, st.st_size, st.st_mtime)
+            size = st.st_size
+        except OSError:
+            prof = {"kind": "missing"}
+            size = 0
+        row = dict(it)
+        row.update({
+            "file": os.path.basename(p),
+            "size": size,
+            "name": prof.get("name") or "",
+            "author": prof.get("author") or "",
+            "website": prof.get("website") or "",
+            "kind": prof.get("kind") or "",
+            "items": prof.get("items") or [],
+            "item_count": prof.get("item_count") or 0,
+            "thumbs": prof.get("thumbs") or [],
+            "files": prof.get("files") or 0,
+        })
+        out.append(row)
+    return {"cat": cat, "total": total, "offset": offset,
+            "items": out, "counts": counts}
+
+
+def _plugin_dirs():
+    """插件目录与日志，跟随当前游戏目录自动推导。"""
+    game = CONF.get("game") or ""
+    plugins = os.path.join(game, "BepInEx", "plugins") if game else ""
+    log_path = os.path.join(game, "BepInEx", "LogOutput.log") if game else ""
+    return plugins, log_path
+
+
+def _plugins_payload(q):
+    refresh = (q.get("refresh") or ["0"])[0] in ("1", "true", "yes")
+    plugins_dir, log_path = _plugin_dirs()
+    if not plugins_dir or not os.path.isdir(plugins_dir):
+        return {"ok": False, "error": "找不到插件目录：" + (plugins_dir or "(未知游戏目录)")}
+    try:
+        return plugmod.build_payload(plugins_dir=plugins_dir,
+                                     log_path=log_path, refresh=refresh)
+    except Exception as e:
+        log.exception("插件扫描失败")
+        return {"ok": False, "error": str(e)}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "KKSCard/1.0"
 
@@ -352,6 +442,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
             return
         self._send(200, data, ctype)
+
+    def _raw(self, blob, ctype):
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(blob)))
+        self.send_header("Cache-Control", "max-age=86400")
+        self.end_headers()
+        try:
+            self.wfile.write(blob)
+        except Exception:
+            pass
 
     def do_GET(self):
         u = urllib.parse.urlparse(self.path)
@@ -423,6 +524,24 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(404, {"error": "no thumb"})
                 return self._file(t, "image/jpeg")
 
+            if path == "/api/orphans":
+                return self._send(200, _orphans_payload(q))
+
+            if path == "/api/plugins":
+                return self._send(200, _plugins_payload(q))
+
+            if path == "/api/modthumb":
+                ab = (q.get("path") or [""])[0]
+                entry = (q.get("entry") or [""])[0]
+                if not ab or not entry:
+                    return self._send(400, {"error": "path/entry required"})
+                try:
+                    with zipfile.ZipFile(ab) as z:
+                        blob = z.read(entry)
+                except Exception as e:
+                    return self._send(404, {"error": str(e)})
+                return self._raw(blob, "image/png")
+
             return self._send(404, {"error": "no route"})
         except Exception as e:
             try:
@@ -469,6 +588,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._api_restore(body)
             if u.path == "/api/index":
                 return self._api_index(body)
+            if u.path == "/api/modclean":
+                return self._api_modclean(body)
+            if u.path == "/api/plugintoggle":
+                return self._api_plugintoggle(body)
             if u.path == "/api/log":
                 return self._api_log(body)
             return self._send(404, {"error": "no route"})
@@ -622,10 +745,74 @@ class Handler(BaseHTTPRequestHandler):
         if body.get("rebuild"):
             n = refresh_card_store()
             store.scan_mods(CONF["mods"], force=True)
+            store.backfill_history()
             d = self._index_status()
             d["rebuilt"] = n
             return self._send(200, d)
         return self._send(200, self._index_status())
+
+    def _api_plugintoggle(self, body):
+        rel = (body.get("rel") or "").strip()
+        if not rel:
+            return self._send(400, {"error": "没有指定插件"})
+        enable = bool(body.get("enable"))
+        plugins_dir, _ = _plugin_dirs()
+        if not plugins_dir or not os.path.isdir(plugins_dir):
+            return self._send(400, {"error": "找不到插件目录"})
+        res = plugmod.toggle(plugins_dir, rel, enable)
+        if not res.get("ok"):
+            return self._send(400, res)
+        log.info("插件 %s：%s", "启用" if enable else "禁用", rel)
+        return self._send(200, res)
+
+    def _api_modclean(self, body):
+        files = body.get("files") or []
+        if not isinstance(files, list) or not files:
+            return self._send(400, {"error": "没有选中任何 mod"})
+        base = (body.get("recycle") or CONF.get("recycle") or "").strip()
+        if not base:
+            return self._send(400, {"error": "没有设置清理区"})
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        batch = os.path.join(base, stamp)
+        mods_root = CONF["mods"]
+        moved, errors, total = [], [], 0
+        for p in files:
+            try:
+                p = os.path.abspath(p)
+                if not p.lower().endswith((".zipmod", ".zip")):
+                    errors.append({"path": p, "error": "不是 mod 文件"})
+                    continue
+                if not os.path.isfile(p):
+                    errors.append({"path": p, "error": "文件不存在"})
+                    continue
+                rel = os.path.relpath(p, mods_root)
+                if rel.startswith(".."):
+                    rel = os.path.basename(p)
+                dst = os.path.join(batch, "mods", rel)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                if os.path.exists(dst):
+                    r0, ext = os.path.splitext(dst)
+                    i = 1
+                    while os.path.exists("%s_%d%s" % (r0, i, ext)):
+                        i += 1
+                    dst = "%s_%d%s" % (r0, i, ext)
+                size = os.path.getsize(p)
+                shutil.move(p, dst)
+                try:
+                    store.drop_mod(p)
+                except Exception:
+                    pass
+                moved.append({"src": p, "dst": dst, "rel": rel, "size": size})
+                total += size
+            except Exception as e:
+                errors.append({"path": p, "error": str(e)})
+        if moved:
+            os.makedirs(batch, exist_ok=True)
+            with open(os.path.join(batch, "_清单.json"), "w", encoding="utf-8") as f:
+                json.dump({"at": stamp, "kind": "mods", "moved": moved}, f,
+                          ensure_ascii=False, indent=1)
+        return self._send(200, {"moved": len(moved), "errors": errors,
+                                "size": total, "batch": batch if moved else ""})
 
     # ------------------------------------------------------- 安装导入
     def _api_install(self, body):
@@ -697,9 +884,82 @@ def _short_hash(s):
     return hashlib.md5(s.encode("utf-8", "replace")).hexdigest()[:6]
 
 
+# ---- 贴图（overlay）识别 ----
+# Koikatsu 的 overlay 是普通 PNG，放在 UserData\Overlays\ 下（Face / Body / Iris /
+# Clothes / Pantyhose / LewdCrest 等子目录都行，游戏递归找）。它和人物卡的区别是
+# PNG 里没有追加数据；和预览图的区别是文件名不叫 preview/thumb。
+_OVERLAY_HINT = ("eye", "face", "body", "skin", "iris", "hitomi", "over",
+                 "diffuse", "maintex", "template", "eyebrow", "eyelash",
+                 "mouth", "lip", "crest", "stocking", "pantyhose")
+_OVERLAY_SKIP = ("preview", "thumb", "cover", "sample", "banner", "logo", "icon")
+
+
+def _looks_like_overlay(name):
+    low = name.lower()
+    if any(k in low for k in _OVERLAY_SKIP):
+        return False
+    return any(k in low for k in _OVERLAY_HINT)
+
+
+# 游戏根目录的四个标志性目录。源文件夹里出现它们，就当是「游戏根的结构片段」，
+# 按相对路径原样镜像过去（插件数据、abdata 资源都走这条）。
+_ROOT_DIRS = ("abdata", "BepInEx", "UserData", "mods")
+
+
+def _root_split(full):
+    """如果 full 位于 abdata/BepInEx/UserData/mods 之下，返回 (根名, 其下相对路径)。"""
+    parts = os.path.normpath(full).split(os.sep)
+    for i in range(len(parts) - 1, -1, -1):
+        if parts[i] in _ROOT_DIRS:
+            return parts[i], os.sep.join(parts[i + 1:])
+    return None, None
+
+
+def _read_manifest_file(path):
+    """读一个裸的 manifest.xml（不是 zipmod 里的），返回 {guid,name,version,author}。"""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(64 * 1024)
+        txt = raw.decode("utf-8", "replace")
+    except Exception:
+        return {}
+    out = {}
+    for key in ("guid", "name", "version", "author"):
+        m = re.search(r"<%s>\s*([^<]*?)\s*</%s>" % (key, key), txt, re.I)
+        if m and m.group(1):
+            out[key] = m.group(1)
+    return out
+
+
+def _is_abdata_pack(d):
+    """判断 d 是不是「被解压开的 zipmod」——同目录既有 manifest.xml 又有 abdata\\。
+
+    这类目录直接铺进游戏 abdata\\ 也能用，但那是 Hard mod 做法：游戏重装会丢、
+    KKManager 认不出、CSV 同名会互相顶掉。正确做法是重新打包成 .zipmod。"""
+    try:
+        return (os.path.isfile(os.path.join(d, "manifest.xml"))
+                and os.path.isdir(os.path.join(d, "abdata")))
+    except Exception:
+        return False
+
+
+def _count_tree(d):
+    n, sz = 0, 0
+    for dp, dn, fn in os.walk(d):
+        for f in fn:
+            n += 1
+            try:
+                sz += os.path.getsize(os.path.join(dp, f))
+            except Exception:
+                pass
+    return n, sz
+
+
 def _install_scan(source, max_files=30000):
-    """扫描源文件夹（递归，最多 3 层），分类出卡和 mod。"""
-    cards, mods, others = [], [], 0
+    """递归扫源文件夹，分出：人物卡 / mod / 解包的 zipmod 目录 / 贴图 / 游戏结构文件。"""
+    cards, mods, overlays, datas = [], [], [], []
+    packs = []
+    others = 0
     seen = set()
     count = [0]
 
@@ -717,10 +977,22 @@ def _install_scan(source, max_files=30000):
             full = os.path.join(d, n)
             if os.path.isdir(full):
                 if depth < 6 and not n.startswith("."):
+                    # 解包开的 zipmod：整棵收走，不再逐文件归类
+                    if _is_abdata_pack(full):
+                        fcount, fsize = _count_tree(full)
+                        count[0] += fcount
+                        mf = _read_manifest_file(os.path.join(full, "manifest.xml"))
+                        packs.append({"dir": full, "name": n,
+                                      "guid": mf.get("guid") or mf.get("name") or n,
+                                      "version": mf.get("version") or "",
+                                      "author": mf.get("author") or "",
+                                      "files": fcount, "size": fsize})
+                        continue
                     walk(full, depth + 1)
                 continue
             count[0] += 1
             low = n.lower()
+            # 1) mod
             if low.endswith(MOD_EXT):
                 try:
                     sz = os.path.getsize(full)
@@ -731,22 +1003,49 @@ def _install_scan(source, max_files=30000):
                     continue
                 seen.add(key)
                 mods.append({"name": n, "path": full, "size": sz})
-            elif low.endswith(CARD_EXT):
+                continue
+            # 2) 卡 / 服装卡（PNG 里带卡数据）
+            if low.endswith(CARD_EXT):
                 info = kklib.parse_card(full)
                 if info.get("kind") in ("card", "coord"):
                     cards.append({"name": n, "path": full,
                                   "kind": info.get("kind"),
                                   "title": info.get("title") or "",
                                   "refs": len({r.get("guid") for r in (info.get("refs") or []) if r.get("guid")})})
-            else:
+                    continue
+                # 3) 贴图 —— 没有卡数据的 PNG，且名字像 overlay
+                if _looks_like_overlay(n):
+                    rroot, rrel = _root_split(full)
+                    if rroot == "mods":
+                        # mod 包解压目录里的说明图，不是贴图
+                        others += 1
+                        continue
+                    overlays.append({"name": n, "path": full,
+                                     "sub": (rroot, rrel) if rroot else None})
+                    continue
                 others += 1
+                continue
+            # 4) 游戏结构文件：只收 BepInEx\ 下的插件数据/配置，以及 UserData\Overlays\ 下的贴图。
+            #    abdata\ 是游戏原始资源，直接覆盖有风险，一律不动；mods\ 已在第 1 步处理过。
+            rroot, rrel = _root_split(full)
+            if rroot == "BepInEx" or (rroot == "UserData" and rrel.lower().startswith("overlays")):
+                datas.append({"name": n, "path": full, "root": rroot, "rel": rrel})
+                continue
+            others += 1
 
     walk(source)
     cards.sort(key=lambda x: x["name"].lower())
     mods.sort(key=lambda x: x["name"].lower())
-    return {"src": source, "cards": cards, "mods": mods, "others": others,
+    overlays.sort(key=lambda x: x["name"].lower())
+    datas.sort(key=lambda x: x["path"].lower())
+    packs.sort(key=lambda x: x["name"].lower())
+    return {"src": source, "cards": cards, "mods": mods,
+            "overlays": overlays, "datas": datas, "packs": packs,
+            "others": others,
             "scanned": count[0], "truncated": count[0] > max_files,
-            "total_cards": len(cards), "total_mods": len(mods)}
+            "total_cards": len(cards), "total_mods": len(mods),
+            "total_overlays": len(overlays), "total_datas": len(datas),
+            "total_packs": len(packs)}
 
 
 def _unique_path(dest_dir, name):
@@ -761,20 +1060,51 @@ def _unique_path(dest_dir, name):
     return d
 
 
+def _quarantine_mod_file(path, mods_dir):
+    """把一个旧 zipmod 挪进隔离区的 mods 子目录，返回新路径（失败返回 None）。"""
+    base = CONF["recycle"]
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    try:
+        rel = os.path.relpath(path, mods_dir)
+    except ValueError:
+        rel = os.path.basename(path)
+    dst = os.path.join(base, stamp, "mods", rel)
+    try:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.move(path, dst)
+    except Exception:
+        log.exception("挪进隔离区失败：%s", path)
+        return None
+    try:
+        store.drop_mod(path)
+    except Exception:
+        pass
+    return dst
+
+
 def _do_install(source, dest, dest_rel, root_name="chara"):
-    """卡按类型归位，mod 进 mods；认不出的原样留下，由用户自己决定放哪。"""
+    """卡按类型归位，mod 进 mods，贴图进 Overlays，游戏结构文件按目录镜像；
+    认不出的原样留下，由用户自己决定放哪。"""
     scan = _install_scan(source)
     coord_root = CONF["coord"]
     mods_dir = CONF["mods"]
+    game = CONF.get("game") or ""
+    src_name = os.path.basename(os.path.normpath(source)) or "imported"
     try:
         os.makedirs(mods_dir, exist_ok=True)
     except Exception:
         pass
 
     moves, errors, skipped = [], [], []
-    counts = {"card": 0, "coord": 0, "mod": 0, "unknown": 0}
+    overlay_kept = []
+    counts = {"card": 0, "coord": 0, "mod": 0, "pack": 0, "overlay": 0, "data": 0, "unknown": 0}
 
     def move_to(src_path, dst_dir, tag):
+        try:
+            os.makedirs(dst_dir, exist_ok=True)
+        except Exception as e:
+            errors.append("%s：建目录失败 %s" % (os.path.basename(src_path), e))
+            return False
         d = _unique_path(dst_dir, os.path.basename(src_path))
         try:
             shutil.move(src_path, d)
@@ -803,15 +1133,136 @@ def _do_install(source, dest, dest_rel, root_name="chara"):
         else:
             move_to(c["path"], dest, "card")
 
+    # ---- mod：按 GUID 查重，而不是按文件名。
+    # 同一个 mod 换作者重新打包就换了文件名，按文件名查重会越堆越多；
+    # 反过来不同 mod 撞了同一个 guid 时，也不能无脑覆盖——这里只在
+    # 新包更大时才顶掉旧包，旧包挪进隔离区，随时能还原。
+    try:
+        if not store.mod_count():
+            store.scan_mods(mods_dir)
+    except Exception:
+        log.exception("建 mods 索引失败")
+    installed = {}
+    try:
+        installed = store.mods_by_guid()
+    except Exception:
+        log.exception("读 mods 索引失败")
+
+    replaced, missing = [], {}
+
     for m in scan["mods"]:
         low = m["name"].lower()
         if low.endswith(".zip") and not _zip_is_mod(m["path"]):
             skipped.append(m["name"])
             continue
-        if os.path.exists(os.path.join(mods_dir, os.path.basename(m["path"]))):
+        man = {}
+        try:
+            man = kklib.read_manifest(m["path"]) or {}
+        except Exception:
+            man = {}
+        guid = (str(man.get("guid") or "")).strip().lower()
+        base = os.path.basename(m["path"])
+        dst = os.path.join(mods_dir, base)
+
+        if guid:
+            have = [p for p in installed.get(guid, []) if os.path.isfile(p)]
+            if any(os.path.normcase(p) == os.path.normcase(dst) for p in have):
+                skipped.append("%s（mods 里已有同一 GUID：%s）" % (m["name"], guid))
+                continue
+            if have:
+                old = max(have, key=lambda p: os.path.getsize(p))
+                try:
+                    new_size, old_size = os.path.getsize(m["path"]), os.path.getsize(old)
+                except OSError:
+                    new_size = old_size = 0
+                if old_size >= new_size:
+                    skipped.append("%s（已装更大的同 GUID 包：%s）" % (m["name"], os.path.basename(old)))
+                    continue
+                try:
+                    q = _quarantine_mod_file(old, mods_dir)
+                    if q:
+                        replaced.append({"guid": guid, "old": old, "to": q,
+                                         "new": base, "old_mb": round(old_size / 1048576, 2)})
+                        installed[guid] = [p for p in have if p != old]
+                except Exception as e:
+                    errors.append("%s：旧包挪进隔离区失败 %s" % (base, e))
+        if os.path.exists(dst):
             errors.append("%s：mods 里已有同名文件，跳过" % m["name"])
             continue
-        move_to(m["path"], mods_dir, "mod")
+        if move_to(m["path"], mods_dir, "mod") and guid:
+            installed.setdefault(guid, []).append(dst)
+
+    # 解包开的 zipmod（manifest.xml + abdata\）：重新打包成 .zipmod 放进 mods\
+    # 这样不动游戏 abdata\，又能被 Sideloader 合并、被 KKManager 管理、可一键卸载
+    for pk in scan.get("packs") or []:
+        safe = re.sub(r'[\\/:*?"<>|\s]+', '_', str(pk.get("guid") or pk["name"])).strip("_") or "pack"
+        out = os.path.join(mods_dir, safe + ".zipmod")
+        if os.path.exists(out):
+            skipped.append(pk["name"] + "（mods 里已有同名 zipmod）")
+            continue
+        try:
+            os.makedirs(mods_dir, exist_ok=True)
+            tmp = out + ".part"
+            with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as z:
+                for dp, dn, fn in os.walk(pk["dir"]):
+                    for f in fn:
+                        fp = os.path.join(dp, f)
+                        try:
+                            rel = os.path.relpath(fp, pk["dir"]).replace(os.sep, "/")
+                            z.write(fp, rel)
+                        except Exception as e:
+                            errors.append("%s/%s：%s" % (pk["name"], f, e))
+            os.replace(tmp, out)
+        except Exception as e:
+            errors.append("%s：打包失败 %s" % (pk["name"], e))
+            try:
+                if os.path.exists(out + ".part"):
+                    os.remove(out + ".part")
+            except Exception:
+                pass
+            continue
+        moves.append({"src": pk["dir"], "dst": out, "type": "pack"})
+        counts["pack"] += 1
+        try:
+            store.upsert_mod(out)
+        except Exception:
+            pass
+
+    # 贴图不再自动装：卡里的 overlay 是内嵌进卡文件的字节，不依赖 UserData\Overlays\。
+    # 这里的 png 只是「游戏内贴图素材库」，不放进去游戏也能正常读卡，所以默认原样留着。
+    overlay_root = os.path.join(game, "UserData", "Overlays") if game else ""
+    for o in scan["overlays"]:
+        overlay_kept.append(o["name"])
+    # 游戏结构文件（BepInEx\Stiletto 数据等）按原相对路径镜像
+    if game:
+        for d in scan["datas"]:
+            target = os.path.dirname(os.path.join(game, d["root"], d["rel"]))
+            move_to(d["path"], target, "data")
+    else:
+        skipped.extend([d["name"] for d in scan["datas"]])
+
+    # ---- 装完做一次依赖校验：新装/动过的卡引用的 GUID 是否都齐了
+    try:
+        fresh = store.mods_by_guid()
+    except Exception:
+        fresh = installed
+    have_guids = set(fresh.keys())
+    for mv in moves:
+        if mv["type"] not in ("card", "coord"):
+            continue
+        try:
+            info = kklib.parse_card(mv["dst"])
+        except Exception:
+            continue
+        for r in (info.get("refs") or []):
+            g = str(r.get("guid") or "").strip().lower()
+            if g and g not in have_guids:
+                names = missing.setdefault(g, [])
+                nm = os.path.basename(mv["dst"])
+                if nm not in names:
+                    names.append(nm)
+    if missing:
+        log.warning("装完缺 %d 个 mod 依赖", len(missing))
 
     entry = {
         "id": datetime.datetime.now().strftime("%Y%m%d-%H%M%S") + "-" + hashlib.md5(
@@ -823,6 +1274,8 @@ def _do_install(source, dest, dest_rel, root_name="chara"):
         "counts": counts,
         "moves": moves,
         "errors": errors,
+        "replaced": replaced,
+        "missing": [{"guid": g, "cards": c} for g, c in sorted(missing.items())],
     }
     if moves:
         add_instlog(entry)
@@ -830,9 +1283,17 @@ def _do_install(source, dest, dest_rel, root_name="chara"):
     return {"cards": [os.path.basename(m["dst"]) for m in moves if m["type"] == "card"],
             "coords": [os.path.basename(m["dst"]) for m in moves if m["type"] == "coord"],
             "mods": [os.path.basename(m["dst"]) for m in moves if m["type"] == "mod"],
+            "packs": [os.path.basename(m["dst"]) for m in moves if m["type"] == "pack"],
+            "packs_src": [os.path.basename(m["src"]) for m in moves if m["type"] == "pack"],
+            "overlays": [os.path.basename(m["dst"]) for m in moves if m["type"] == "overlay"],
+            "overlay_kept": overlay_kept,
+            "datas": [os.path.basename(m["dst"]) for m in moves if m["type"] == "data"],
             "unknown": [],
             "skipped": skipped,
-            "errors": errors, "counts": counts, "entry": entry.get("id") if moves else None,
+            "errors": errors, "counts": counts,
+            "replaced": replaced,
+            "missing": [{"guid": g, "cards": c} for g, c in sorted(missing.items())],
+            "entry": entry.get("id") if moves else None,
             "dest": dest_rel, "src": source}
 
 
@@ -874,16 +1335,61 @@ def refresh_card_store(progress=None):
     return n
 
 
-def ensure_card_store():
-    """库里的卡明显比磁盘少时，先补齐再判断引用关系。"""
+def ensure_card_store(max_seconds=8.0):
+    """按目录 mtime 增量补齐。
+
+    只重扫 mtime 变过的目录（用户手动拷卡进去、在资源管理器里挪过）；
+    mtime 没变的目录直接跳过。这修掉了以前"一次全量建库就再也不管，
+    手动拷进来的卡永远不入库，删卡时误把别人要用的 mod 搬走"的问题。
+    """
     root = CONF["root"]
-    disk = 0
-    for dp, dn, fn in os.walk(root):
-        disk += sum(1 for f in fn if f.lower().endswith(".png"))
-    have = store.card_count()
-    if have >= disk * 0.99 and have > 0:
+    if not os.path.isdir(root):
         return 0
-    return refresh_card_store()
+    t0 = time.time()
+    dirs = []
+    disk_total = 0
+    for dp, dn, fn in os.walk(root):
+        pngs = sum(1 for f in fn if f.lower().endswith(".png"))
+        if not pngs:
+            continue
+        disk_total += pngs
+        try:
+            dirs.append((dp, os.path.getmtime(dp)))
+        except OSError:
+            continue
+    # 新的先扫，超时了就留到下次
+    dirs.sort(key=lambda x: -x[1])
+    known = store.all_meta("dirmt:")
+    n = 0
+    touched = 0
+    for dp, mt in dirs:
+        rel = os.path.relpath(dp, root).replace("\\", "/")
+        key = "dirmt:" + rel
+        old = known.get(key)
+        if old is not None and abs(float(old) - mt) < 0.001:
+            continue
+        try:
+            n += len(store.cards_in(dp))
+        except Exception:
+            log.exception("增量入卡片目录失败：%s", dp)
+            continue
+        store.set_meta(key, mt)
+        touched += 1
+        if time.time() - t0 > max_seconds:
+            log.info("增量入卡片目录未跑完（已处理 %d 个目录），下次继续", touched)
+            break
+    if touched:
+        log.info("增量入卡片目录：%d 个目录有变化，新增/更新 %d 张卡", touched, n)
+    # 库里比磁盘多出一截，说明用户在资源管理器里删过卡，清掉失效记录
+    try:
+        have = store.card_count()
+        if disk_total and have > disk_total * 1.05:
+            gone = store.prune(root)
+            if gone:
+                log.info("清理库中已不存在的卡：%d 张（磁盘 %d / 库 %d）", gone, disk_total, have)
+    except Exception:
+        log.exception("清理库中失效卡失败")
+    return n
 
 
 # --------------------------------------------------------------- 回收站

@@ -55,7 +55,7 @@
 
 ### 卡片详情
 
-点一张卡，右边是原图，下面列出它引用的每个 zipmod GUID，按用途归纳：
+点一张卡，右边常驻的预览栏（可拖宽、可收起）显示原图，下面列出它引用的每个 zipmod GUID，按用途归纳：
 
 ```
 ZMX008                 第5套·服装·手套、第4套·服装·手套
@@ -63,6 +63,35 @@ yamadamod.accprim      第5套·饰品槽 ×46、第4套·饰品槽 ×45
 HeadMod                面部·脸型
 moderchan.CharamakerSupportMOD   面部·鼻子、身体·涂装2
 ```
+
+单击是"选中 + 预览"，`Ctrl` 单击是加选，预览始终跟着最后点的那张。
+
+### mod 清理
+
+左栏第四个入口 **mod 清理**，按引用情况分三个页签：
+
+| 页签 | 含义 |
+|---|---|
+| 真孤儿 | 曾经有卡引用它，现在一张都没有 |
+| 从未被引用 | 从来没有卡引用过 |
+| 在用 | 现在还有卡引用 |
+
+每条显示文件名、内容类型（人物内容 / 场景物件 / 动作 / 插件）、大小、manifest 里的名字与作者、从包里 `abdata/list/characustom/*.csv` 读出来的部件名，以及包内缩略图——没见过的 mod 也能一眼看出是什么。勾选后「移到清理区」，只移动不删除，批次里带一份 `_清单.json`。
+
+### 插件
+
+左栏第五个入口 **插件**，把 `BepInEx\plugins` 下的 dll 全列出来，并告诉你每个插件的**真实加载状态**：
+
+| 页签 | 含义 |
+|---|---|
+| 全部 | 读到插件类的所有 dll |
+| 有问题 | 缺依赖 / 被依赖链拦住 / 加载失败 / BepInEx 版本不对 |
+| 正常 | 日志里明确加载成功 |
+| 仅 Studio | 声明了 `BepInProcess`，只在工作室里加载，主游戏里看不到属正常 |
+
+状态是两路数据叠出来的：Mono.Cecil 直接读 dll 里的 `BepInPlugin`（GUID、名称、版本）、`BepInDependency`（依赖谁、最低要多少版本）、`BepInProcess`；再解析 `BepInEx\LogOutput.log`，取「加载成功 / 缺依赖 / 因为依赖没加载而跳过 / 进程过滤跳过 / BepInEx 版本不对」这些结论。**日志优先**——有些插件是混合模式 dll（比如装着 KSOX 的 `KKS_OverlayMods.dll`），Cecil 读不出它的 GUID，只看依赖表会把它误判成缺依赖。
+
+每行一个「禁用 / 启用」按钮，把 `.dll` 改名成 `.dll.off` 或改回来，不删文件，随时可逆。
 
 ### 筛选
 
@@ -104,9 +133,18 @@ moderchan.CharamakerSupportMOD   面部·鼻子、身体·涂装2
 | 服装卡 | `UserData\coordinate` |
 | `.zipmod` | 游戏 mods 目录 |
 | 内含 `manifest.xml` 或 `abdata/` 的 `.zip` | 游戏 mods 目录 |
+| **解包的 mod**——同一个文件夹里既有 `manifest.xml` 又有 `abdata\` 目录树 | **重新打包成 `mods\<guid>.zipmod`**，游戏自己的 `abdata\` 一个字节都不写 |
+| **插件数据**——`BepInEx\` 目录下的文件（比如 `BepInEx\Stiletto\*.txt` 的鞋跟高度表） | 按原相对路径镜像到游戏根 |
+| 贴图和说明文件 | **原样留在原地**——理由见下 |
 | 其它认不出的 | **原样留在原地**——不建文件夹，不搬 |
 
+**为什么解包的 mod 要重新打包，而不是覆盖 `abdata`。** 人物包里经常带一个已经解压开的 mod：一个文件夹里 `manifest.xml` 旁边就是 `abdata\chara\*.unity3d` 和 `abdata\list\characustom\*.csv`。把这些文件直接铺进游戏的 `abdata\` 确实能用，但那属于旧的「Hard mod」做法——游戏更新或重装会丢、KKManager 看不到、两个 mod 用了同一个通用 CSV 名（`top.csv`、`bot.csv`）就会互相顶掉而且没有任何提示。打回 `.zipmod` 既不碰本体，又变成可识别、可卸载的正常 mod。
+
+**为什么贴图 PNG 不装了。** 卡里的 overlay 贴图是**内嵌在卡文件里面**的（`KKEx` → `KSOX` → `FaceOver` / `BodyOver` / `EyeOver` …），读卡时根本不需要磁盘上的文件。包里那些 `eye L.png`、`face_original_Diffuse.png` 是给 Maker 里自己画角色用的素材库，只有你想手动改角色时才用得上。需要的自己拖进 `UserData\Overlays\` 即可。
+
 没有「未分类」这种默认文件夹。要分类就自己建（界面里「新建文件夹」，或者资源管理器里建），再自己选目标——工具不替你决定。
+
+**重复包处理和依赖校验。** 装一个 mod 之前会先读它的 `manifest.xml`，拿 GUID 跟已装的比对：同一个 GUID 而库里那份更旧或更小 → 把旧的挪进隔离区，新的顶上；同一个 GUID 而库里已经有更大的 → 跳过不装。搬完之后会把所有卡重新解析一遍，卡引用了但 mods 里找不到的 GUID 会列出来，缺部件当场就能看到，不用等进游戏才发现。
 
 每次安装都会记账（只记位置变更，不备份内容），最近 10 次可以在「历史记录」里**逐次撤销**。
 
@@ -118,6 +156,8 @@ moderchan.CharamakerSupportMOD   面部·鼻子、身体·涂装2
 | 扫一个卡文件夹（216 张） | 约 1.5 秒 | **0.015 秒** |
 | 全量卡片索引（5064 张） | 约 28 秒 | 瞬时 |
 | mod 索引（16577 个 zipmod） | 约 3.7 秒 | 瞬时 |
+
+索引是增量维护的：每个目录的 mtime 都记下来，隔离操作只会重读真正变过的目录，单次上限 8 秒、跑不完下次接着来——没有变化时刷新只要百分之几秒。库里条目超过磁盘实际数量 5% 时会自动 prune 掉已经不存在的卡。
 
 ### 英文 / 中文界面
 
@@ -200,7 +240,9 @@ int64   ...
 server.py          HTTP 服务 + JSON API + 隔离/安装/还原逻辑
 kklib.py           卡片与 zipmod 解析（PNG 尾部、msgpack、manifest、内容画像）
 store.py           SQLite 索引
-static/            index.html、style.css、app.js（无框架、无 CDN）
+plugins.py         插件清单：合并 Mono.Cecil 扫描结果与 LogOutput.log 的加载结论
+tools/scan_plugins.ps1   被 plugins.py 调用的 Cecil 扫描器
+static/            index.html、style.css、app.js、i18n.js（无框架、无 CDN）
 data/              kkcard.db、缩略图、设置（首次运行生成，已 gitignore）
 logs/              kkcard.log、crash.txt、frontend.log（首次运行生成，已 gitignore）
 ```
@@ -221,6 +263,12 @@ logs/              kkcard.log、crash.txt、frontend.log（首次运行生成，
 | `POST /api/recycle` · `/api/restore` | 列出 / 还原隔离批次 |
 | `POST /api/instlog` · `/api/undo` | 列出 / 撤销安装记录 |
 | `POST /api/index` | 重建索引 |
+| `GET /api/index` | 索引统计 |
+| `GET /api/orphans?cat=summary\|in_use\|orphan\|never` | 按引用状态列出 mod |
+| `GET /api/plugins?refresh=1` | 插件清单与加载结论 |
+| `POST /api/plugintoggle` | 禁用 / 启用某个插件（`rel`、`enable`） |
+| `GET /api/modthumb?path=&entry=` | 从 zipmod 里抽出的缩略图 |
+| `POST /api/modclean` | 把选中的 mod 移进隔离区 |
 
 ## 日志
 
